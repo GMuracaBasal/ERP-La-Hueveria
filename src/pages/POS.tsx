@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { productsDB, salesDB, inventoryDB, financeDB, priceListsDB, db } from '../lib/db';
-import { Product, SaleItem, PriceList } from '../types';
+import { Product, SaleItem, PriceList, Settings } from '../types';
 import { Button } from '../components/ui';
 import { generateId, formatCurrency } from '../lib/utils';
 
@@ -12,15 +12,18 @@ export default function POS() {
   const [paymentMethod, setPaymentMethod] = useState<'Efectivo' | 'QR / Transferencia'>('Efectivo');
   const [cashReceived, setCashReceived] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<{total: number, change: number | null} | null>(null);
-  const settings = db.getSettings();
+  const [settings, setSettings] = useState<Settings | null>(null);
 
   useEffect(() => {
-    loadData();
+    (async () => {
+      setSettings(await db.getSettings());
+      loadData();
+    })();
   }, []);
 
-  const loadData = () => {
-    setProducts(productsDB.getAll());
-    const lists = priceListsDB.getAll();
+  const loadData = async () => {
+    setProducts(await productsDB.getAll());
+    const lists = await priceListsDB.getAll();
     const defaultL = lists.find(l => l.isDefault) || null;
     setDefaultList(defaultL);
   };
@@ -90,7 +93,7 @@ export default function POS() {
 
   const total = cartItems.reduce((acc, item) => acc + item.subtotal, 0);
 
-  const handleSaveSale = () => {
+  const handleSaveSale = async () => {
     if (cartItems.length === 0) return;
     
     if (paymentMethod === 'Efectivo') {
@@ -105,7 +108,7 @@ export default function POS() {
     const dateStr = new Date().toISOString();
 
     // 1. Guardar la venta
-    salesDB.save({
+    await salesDB.save({
       id: saleId,
       date: dateStr,
       customerId: null, // Consumidor Final
@@ -115,7 +118,7 @@ export default function POS() {
     });
 
     // 2. Registrar ingreso en finanzas
-    financeDB.save({
+    await financeDB.save({
       id: generateId(),
       date: dateStr,
       type: 'ingreso',
@@ -126,12 +129,12 @@ export default function POS() {
     });
 
     // 3. Actualizar inventario y stock
-    cartItems.forEach(item => {
-      const prod = productsDB.getById(item.productId);
+    for (const item of cartItems) {
+      const prod = await productsDB.getById(item.productId);
       if (prod) {
         prod.stock -= item.quantity;
-        productsDB.save(prod);
-        inventoryDB.save({
+        await productsDB.save(prod);
+        await inventoryDB.save({
           id: generateId(),
           date: dateStr,
           productId: prod.id,
@@ -141,7 +144,7 @@ export default function POS() {
           reason: 'Venta POS - Consumidor Final'
         });
       }
-    });
+    }
 
     const received = parseFloat(cashReceived);
     const change = (paymentMethod === 'Efectivo' && !isNaN(received)) ? received - total : null;
@@ -187,7 +190,7 @@ export default function POS() {
       {/* Columna Izquierda: Grilla */}
       <div className="w-[60%] bg-brand-cream flex flex-col border-r border-brand-border">
         <div className="p-6 border-b border-brand-border bg-white flex flex-col gap-4">
-          <h1 className="text-2xl font-bold text-brand-brown">Punto de Venta - {settings.businessName || 'La Hueveria'}</h1>
+          <h1 className="text-2xl font-bold text-brand-brown">Punto de Venta - {settings?.businessName || 'La Hueveria'}</h1>
           <input
             type="text"
             placeholder="Buscar producto..."

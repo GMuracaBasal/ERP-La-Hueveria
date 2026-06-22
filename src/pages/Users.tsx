@@ -13,8 +13,8 @@ export default function Users() {
 
   const [formData, setFormData] = useState({ fullName: '', username: '', password: '', role: 'vendedor' as Role });
 
-  const loadUsers = () => setUsers(usersDB.getAll());
-  useEffect(() => loadUsers(), []);
+  const loadUsers = async () => setUsers(await usersDB.getAll());
+  useEffect(() => { loadUsers(); }, []);
 
   const handleOpenModal = (user?: User) => {
     if (user) {
@@ -32,19 +32,19 @@ export default function Users() {
     if (editingUser) {
       const updatedUser = { ...editingUser, fullName: formData.fullName, username: formData.username, role: formData.role };
       if (formData.password) updatedUser.passwordHash = await hashPassword(formData.password);
-      usersDB.save(updatedUser);
+      await usersDB.save(updatedUser);
     } else {
       const passwordHash = await hashPassword(formData.password || '123456');
-      usersDB.save({ id: generateId(), fullName: formData.fullName, username: formData.username, passwordHash, role: formData.role });
+      await usersDB.save({ id: generateId(), fullName: formData.fullName, username: formData.username, passwordHash, role: formData.role });
     }
     setIsModalOpen(false);
     loadUsers();
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (id === currentUser?.id) return alert('No puedes eliminar tu propio usuario');
     if (confirm('¿Eliminar usuario?')) {
-      usersDB.delete(id);
+      await usersDB.delete(id);
       loadUsers();
     }
   };

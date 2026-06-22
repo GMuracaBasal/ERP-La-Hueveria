@@ -15,9 +15,9 @@ export default function Caja() {
     loadData();
   }, []);
 
-  const loadData = () => {
+  const loadData = async () => {
     // 1. Cargar ingresos del día actual
-    const allFin = financeDB.getAll();
+    const allFin = await financeDB.getAll();
     const todayIngresos = allFin.filter(f => 
       f.type === 'ingreso' && 
       isToday(parseISO(f.date))
@@ -25,12 +25,12 @@ export default function Caja() {
     setFinances(todayIngresos);
 
     // 2. Cargar ventas del día de hoy
-    const allSales = salesDB.getAll();
+    const allSales = await salesDB.getAll();
     const tSales = allSales.filter(s => isToday(parseISO(s.date))).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     setTodaysSales(tSales);
 
     // 3. Cargar catálogo para descripciones
-    setProducts(productsDB.getAll());
+    setProducts(await productsDB.getAll());
   };
 
   const getProductName = (productId: string) => {

@@ -14,11 +14,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
-    const storedUserId = localStorage.getItem('hueveria_logged_in_user');
-    if (storedUserId) {
-      const u = usersDB.getById(storedUserId);
-      if (u) setUser(u);
-    }
+    (async () => {
+      const storedUserId = localStorage.getItem('hueveria_logged_in_user');
+      if (storedUserId) {
+        const u = await usersDB.getById(storedUserId);
+        if (u) setUser(u);
+      }
+    })();
   }, []);
 
   const login = (u: User) => {

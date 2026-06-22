@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { salesDB, customersDB, productsDB, inventoryDB, financeDB, priceListsDB, db } from '../lib/db';
-import { Sale, SaleItem, Customer, Product, PriceList } from '../types';
+import { Sale, SaleItem, Customer, Product, PriceList, Settings } from '../types';
 import { Button, Modal, Badge, SearchableSelect } from '../components/ui';
 import { generateId, formatCurrency } from '../lib/utils';
 import { format } from 'date-fns';
@@ -19,19 +19,25 @@ export default function Sales() {
   const [paymentMethod, setPaymentMethod] = useState('Efectivo');
   const [items, setItems] = useState<SaleItem[]>([]);
 
-  const settings = db.getSettings();
+  const [settings, setSettings] = useState<Settings | null>(null);
 
-  const load = () => {
-    setSales(salesDB.getAll().sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-    setCustomers(customersDB.getAll());
-    setProducts(productsDB.getAll());
-    setPriceLists(priceListsDB.getAll());
+  const load = async () => {
+    const allSales = await salesDB.getAll();
+    setSales(allSales.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+    setCustomers(await customersDB.getAll());
+    setProducts(await productsDB.getAll());
+    setPriceLists(await priceListsDB.getAll());
   };
-  useEffect(() => load(), []);
+  useEffect(() => {
+    (async () => {
+      setSettings(await db.getSettings());
+      load();
+    })();
+  }, []);
 
   // Determine current active price list map
   const getActivePrices = (): Record<string, number> => {
-    let targetListId = settings.defaultPriceListId; // Consumidor final
+    let targetListId = settings?.defaultPriceListId; // Consumidor final
     if (customerId) {
       const c = customers.find(c => c.id === customerId);
       if (c && c.priceListId) targetListId = c.priceListId;
@@ -71,7 +77,7 @@ export default function Sales() {
 
   const total = items.reduce((acc, curr) => acc + curr.subtotal, 0);
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (items.length === 0 || items.some(i => !i.productId || i.quantity <= 0)) return alert('Agregue productos válidos');
 
@@ -96,10 +102,10 @@ export default function Sales() {
     };
 
     // 1. Guardar Venta
-    salesDB.save(sale);
+    await salesDB.save(sale);
 
     // 2. Finanzas (Ingreso)
-    financeDB.save({
+    await financeDB.save({
       id: generateId(),
       date: dateStr,
       type: 'ingreso',
@@ -110,13 +116,13 @@ export default function Sales() {
     });
 
     // 3. Inventario (Salidas)
-    items.forEach(item => {
-      const dbProd = productsDB.getById(item.productId);
+    for (const item of items) {
+      const dbProd = await productsDB.getById(item.productId);
       if (dbProd) {
         dbProd.stock -= item.quantity;
-        productsDB.save(dbProd);
+        await productsDB.save(dbProd);
 
-        inventoryDB.save({
+        await inventoryDB.save({
           id: generateId(),
           date: dateStr,
           productId: dbProd.id,
@@ -126,7 +132,7 @@ export default function Sales() {
           reason: `Venta a ${customerId ? customers.find(c=>c.id === customerId)?.name : 'Consumidor Final'}`
         });
       }
-    });
+    }
 
     setIsModalOpen(false);
     load();
@@ -244,7 +250,7 @@ export default function Sales() {
         {detailsModal && (
           <div className="space-y-4">
             <div className="text-center pb-4 border-b border-dashed">
-              <h2 className="text-lg font-bold">{settings.businessName}</h2>
+              <h2 className="text-lg font-bold">{settings?.businessName}</h2>
               <div className="text-sm text-gray-500">Ticket #{detailsModal.id.slice(0,8).toUpperCase()}</div>
               <div className="text-sm text-gray-500">{format(new Date(detailsModal.date), "dd/MM/yyyy HH:mm")}</div>
             </div>

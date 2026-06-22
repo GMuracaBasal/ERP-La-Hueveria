@@ -15,15 +15,16 @@ export default function Inventory() {
   const [isAdjModalOpen, setIsAdjModalOpen] = useState(false);
   const [adjData, setAdjData] = useState({ productId: '', quantity: 0, reason: 'Rotura' });
 
-  const load = () => {
-    setProducts(productsDB.getAll());
-    setMovements(inventoryDB.getAll().sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+  const load = async () => {
+    setProducts(await productsDB.getAll());
+    const movs = await inventoryDB.getAll();
+    setMovements(movs.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
   };
-  useEffect(() => load(), []);
+  useEffect(() => { load(); }, []);
 
-  const handleAdjust = (e: React.FormEvent) => {
+  const handleAdjust = async (e: React.FormEvent) => {
     e.preventDefault();
-    const prod = productsDB.getById(adjData.productId);
+    const prod = await productsDB.getById(adjData.productId);
     if (!prod) return;
 
     // Generar movimiento de ajuste
@@ -39,9 +40,9 @@ export default function Inventory() {
     const type = diff > 0 ? 'entrada' : 'salida';
     
     prod.stock = adjData.quantity;
-    productsDB.save(prod);
+    await productsDB.save(prod);
 
-    inventoryDB.save({
+    await inventoryDB.save({
       id: generateId(),
       date: new Date().toISOString(),
       productId: prod.id,
@@ -156,7 +157,7 @@ export default function Inventory() {
               options={products.map(p => ({ value: p.id, label: `${p.name} (Actual: ${p.stock})` }))}
               value={adjData.productId ? { value: adjData.productId, label: `${products.find(p => p.id === adjData.productId)?.name} (Actual: ${products.find(p => p.id === adjData.productId)?.stock})` } : null}
               onChange={(selected: any) => {
-                const p = productsDB.getById(selected?.value || '');
+                const p = products.find(prod => prod.id === (selected?.value || ''));
                 setAdjData({...adjData, productId: selected?.value || '', quantity: p ? p.stock : 0});
               }}
               placeholder="Seleccione producto..."

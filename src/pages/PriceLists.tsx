@@ -13,52 +13,53 @@ export default function PriceLists() {
   // This state holds the internal prices being edited for the modal
   const [formData, setFormData] = useState<{name: string, isDefault: boolean, prices: Record<string, number>}>({ name: '', isDefault: false, prices: {} });
 
-  const load = () => {
-    setLists(priceListsDB.getAll());
-    setProducts(productsDB.getAll());
+  const load = async () => {
+    setLists(await priceListsDB.getAll());
+    setProducts(await productsDB.getAll());
   };
-  useEffect(() => load(), []);
+  useEffect(() => { load(); }, []);
 
-  const handleOpenModal = (item?: PriceList) => {
+  const handleOpenModal = async (item?: PriceList) => {
     if (item) {
       setEditing(item);
       setFormData({ name: item.name, isDefault: item.isDefault, prices: { ...item.prices } });
     } else {
       setEditing(null);
       const defaultPrices: Record<string, number> = {};
-      productsDB.getAll().forEach(p => { defaultPrices[p.id] = 0; });
+      const allProducts = await productsDB.getAll();
+      for (const p of allProducts) { defaultPrices[p.id] = 0; }
       setFormData({ name: '', isDefault: false, prices: defaultPrices });
     }
     setIsModalOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     
     // Si la gurdada esDefault, hay que quitar default a todas las demas
     if (formData.isDefault) {
-      lists.forEach(l => {
+      for (const l of lists) {
         if (l.isDefault && (!editing || l.id !== editing.id)) {
           l.isDefault = false;
-          priceListsDB.save(l);
+          await priceListsDB.save(l);
         }
-      });
+      }
     }
 
     if (editing) {
-      priceListsDB.save({ ...editing, ...formData });
+      await priceListsDB.save({ ...editing, ...formData });
     } else {
-      priceListsDB.save({ id: generateId(), ...formData });
+      await priceListsDB.save({ id: generateId(), ...formData });
     }
     setIsModalOpen(false);
     load();
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     const list = lists.find(l => l.id === id);
     if (list?.isDefault) return alert('No puedes eliminar la lista por defecto. Asigna otra primero.');
     if (confirm('¿Eliminar lista de precios? Esto puede afectar a clientes asignados a ella.')) {
-      priceListsDB.delete(id);
+      await priceListsDB.delete(id);
       load();
     }
   };

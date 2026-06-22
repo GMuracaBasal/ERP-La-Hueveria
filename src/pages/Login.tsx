@@ -22,7 +22,7 @@ export default function Login() {
     }
 
     const hashed = await hashPassword(password);
-    const users = usersDB.getAll();
+    const users = await usersDB.getAll();
     const user = users.find(u => u.username === username && u.passwordHash === hashed);
 
     if (user) {

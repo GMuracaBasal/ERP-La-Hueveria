@@ -17,12 +17,13 @@ export default function Purchases() {
   const [formData, setFormData] = useState({ supplierId: '', invoiceNumber: '', notes: '' });
   const [items, setItems] = useState<PurchaseItem[]>([]);
 
-  const load = () => {
-    setPurchases(purchasesDB.getAll().sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-    setSuppliers(suppliersDB.getAll());
-    setProducts(productsDB.getAll());
+  const load = async () => {
+    const allPurchases = await purchasesDB.getAll();
+    setPurchases(allPurchases.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+    setSuppliers(await suppliersDB.getAll());
+    setProducts(await productsDB.getAll());
   };
-  useEffect(() => load(), []);
+  useEffect(() => { load(); }, []);
 
   const handleOpenModal = () => {
     setFormData({ supplierId: '', invoiceNumber: '', notes: '' });
@@ -52,7 +53,7 @@ export default function Purchases() {
 
   const total = items.reduce((acc, curr) => acc + curr.subtotal, 0);
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.supplierId) return alert('Seleccione un proveedor');
     if (items.length === 0 || items.some(i => !i.productId || i.quantity <= 0)) return alert('agregue productos válidos');
@@ -66,10 +67,10 @@ export default function Purchases() {
     };
 
     // 1. Guardar Compra
-    purchasesDB.save(p);
+    await purchasesDB.save(p);
 
     // 2. Finanzas (Egreso)
-    financeDB.save({
+    await financeDB.save({
       id: generateId(),
       date: p.date,
       type: 'egreso',
@@ -79,14 +80,14 @@ export default function Purchases() {
     });
 
     // 3. Inventario y actualización de costo
-    items.forEach(item => {
-      const dbProd = productsDB.getById(item.productId);
+    for (const item of items) {
+      const dbProd = await productsDB.getById(item.productId);
       if (dbProd) {
         dbProd.stock += item.quantity;
         dbProd.costPrice = item.unitCost; // Actualiza con ultimo precio de compra
-        productsDB.save(dbProd);
+        await productsDB.save(dbProd);
 
-        inventoryDB.save({
+        await inventoryDB.save({
           id: generateId(),
           date: p.date,
           productId: dbProd.id,
@@ -96,7 +97,7 @@ export default function Purchases() {
           reason: `Compra a proveedor`
         });
       }
-    });
+    }
 
     setIsModalOpen(false);
     load();

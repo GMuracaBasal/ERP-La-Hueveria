@@ -12,16 +12,17 @@ export default function Dashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({ type: 'egreso', concept: '', amount: 0, paymentMethod: 'Efectivo' });
 
-  const load = () => {
-    setMovements(financeDB.getAll().sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+  const load = async () => {
+    const movs = await financeDB.getAll();
+    setMovements(movs.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
   };
-  useEffect(() => load(), []);
+  useEffect(() => { load(); }, []);
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if(formData.amount <= 0) return alert('El monto debe ser mayor a 0');
     
-    financeDB.save({
+    await financeDB.save({
       id: generateId(),
       date: new Date().toISOString(),
       type: formData.type as 'ingreso'|'egreso',
@@ -61,7 +62,7 @@ export default function Dashboard() {
     <div className="space-y-6">
       <div className="flex justify-between items-center border-b pb-4">
         <h1 className="text-2xl font-bold text-gray-900">Dashboard & Finanzas</h1>
-        <Button onClick={() => setFormData({ type: 'egreso', concept: '', amount: 0, paymentMethod: 'Efectivo' }) || setIsModalOpen(true)}>
+        <Button onClick={() => { setFormData({ type: 'egreso', concept: '', amount: 0, paymentMethod: 'Efectivo' }); setIsModalOpen(true); }}>
           Registrar Movimiento Manual
         </Button>
       </div>

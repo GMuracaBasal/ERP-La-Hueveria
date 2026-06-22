@@ -12,11 +12,11 @@ export default function Customers() {
   
   const [formData, setFormData] = useState({ name: '', phone: '', email: '', address: '', priceListId: '', notes: '' });
 
-  const load = () => {
-    setCustomers(customersDB.getAll());
-    setLists(priceListsDB.getAll());
+  const load = async () => {
+    setCustomers(await customersDB.getAll());
+    setLists(await priceListsDB.getAll());
   };
-  useEffect(() => load(), []);
+  useEffect(() => { load(); }, []);
 
   const handleOpenModal = (item?: Customer) => {
     if (item) {
@@ -29,21 +29,21 @@ export default function Customers() {
     setIsModalOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const dataToSave = { ...formData, priceListId: formData.priceListId || null };
     if (editing) {
-      customersDB.save({ ...editing, ...dataToSave });
+      await customersDB.save({ ...editing, ...dataToSave });
     } else {
-      customersDB.save({ id: generateId(), ...dataToSave });
+      await customersDB.save({ id: generateId(), ...dataToSave });
     }
     setIsModalOpen(false);
     load();
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm('¿Eliminar cliente?')) {
-      customersDB.delete(id);
+      await customersDB.delete(id);
       load();
     }
   };

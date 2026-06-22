@@ -10,8 +10,8 @@ export default function Suppliers() {
   const [editing, setEditing] = useState<Supplier | null>(null);
   const [formData, setFormData] = useState({ name: '', phone: '', email: '', address: '', notes: '' });
 
-  const load = () => setSuppliers(suppliersDB.getAll());
-  useEffect(() => load(), []);
+  const load = async () => setSuppliers(await suppliersDB.getAll());
+  useEffect(() => { load(); }, []);
 
   const handleOpenModal = (item?: Supplier) => {
     if (item) {
@@ -24,20 +24,20 @@ export default function Suppliers() {
     setIsModalOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editing) {
-      suppliersDB.save({ ...editing, ...formData });
+      await suppliersDB.save({ ...editing, ...formData });
     } else {
-      suppliersDB.save({ id: generateId(), ...formData });
+      await suppliersDB.save({ id: generateId(), ...formData });
     }
     setIsModalOpen(false);
     load();
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm('¿Eliminar proveedor?')) {
-      suppliersDB.delete(id);
+      await suppliersDB.delete(id);
       load();
     }
   };

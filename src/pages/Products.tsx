@@ -12,8 +12,8 @@ export default function Products() {
 
   const [formData, setFormData] = useState({ sku: '', name: '', category: 'Huevos', unit: 'Unidad', costPrice: 0, stock: 0, minStock: 0 });
 
-  const load = () => setProducts(productsDB.getAll());
-  useEffect(() => load(), []);
+  const load = async () => setProducts(await productsDB.getAll());
+  useEffect(() => { load(); }, []);
 
   const handleOpenModal = (p?: Product) => {
     if (p) {
@@ -26,23 +26,23 @@ export default function Products() {
     setIsModalOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingProduct) {
-      productsDB.save({ ...editingProduct, ...formData });
+      await productsDB.save({ ...editingProduct, ...formData });
     } else {
       const newProduct: Product = { id: generateId(), ...formData };
-      productsDB.save(newProduct);
+      await productsDB.save(newProduct);
       
       // Añadir a todas las listas de precios en $0
-      const lists = priceListsDB.getAll();
-      lists.forEach(list => {
+      const lists = await priceListsDB.getAll();
+      for (const list of lists) {
         list.prices[newProduct.id] = 0;
-        priceListsDB.save(list);
-      });
+        await priceListsDB.save(list);
+      }
 
       if (newProduct.stock > 0) {
-        inventoryDB.save({
+        await inventoryDB.save({
           id: generateId(),
           date: new Date().toISOString(),
           productId: newProduct.id,
@@ -56,9 +56,9 @@ export default function Products() {
     load();
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm('¿Eliminar producto?')) {
-      productsDB.delete(id);
+      await productsDB.delete(id);
       load();
     }
   };

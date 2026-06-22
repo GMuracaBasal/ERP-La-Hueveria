@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
@@ -8,6 +8,7 @@ import {
   LogOut, Menu, X, Egg
 } from 'lucide-react';
 import { db } from '../lib/db';
+import { Settings } from '../types';
 import { Button } from './ui';
 
 export default function Layout() {
@@ -15,7 +16,11 @@ export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const settings = db.getSettings();
+  const [settings, setSettings] = useState<Settings | null>(null);
+
+  useEffect(() => {
+    (async () => setSettings(await db.getSettings()))();
+  }, []);
 
   const handleLogout = () => {
     logout();
@@ -59,7 +64,7 @@ export default function Layout() {
             <Egg className="w-6 h-6 text-white" />
           </div>
           <span className="font-bold text-lg tracking-tight text-brand-brown leading-tight flex flex-col">
-            <span className="truncate max-w-[120px]">{settings.businessName || 'Huevería'}</span>
+            <span className="truncate max-w-[120px]">{settings?.businessName || 'Huevería'}</span>
             <span className="text-[10px] font-medium text-gray-400 uppercase tracking-widest mt-0.5">Gestión v2.0</span>
           </span>
         </div>
