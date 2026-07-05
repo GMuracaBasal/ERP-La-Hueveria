@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { productsDB, inventoryDB } from '../lib/db';
 import { Product, InventoryMovement } from '../types';
-import { Badge, Button, Modal, SearchableSelect } from '../components/ui';
+import { Badge, Button, Modal, SearchableSelect, useToast } from '../components/ui';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { generateId } from '../lib/utils';
 import { ArrowDown, ArrowUp, RefreshCcw } from 'lucide-react';
 
 export default function Inventory() {
+  const { toast } = useToast();
   const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [filterCategory, setFilterCategory] = useState('');
@@ -37,22 +38,25 @@ export default function Inventory() {
       return;
     }
 
-    const type = diff > 0 ? 'entrada' : 'salida';
-    
-    prod.stock = adjData.quantity;
-    await productsDB.save(prod);
+    try {
+      prod.stock = adjData.quantity;
+      await productsDB.save(prod);
 
-    await inventoryDB.save({
-      id: generateId(),
-      date: new Date().toISOString(),
-      productId: prod.id,
-      type: 'ajuste',
-      quantity: Math.abs(diff),
-      reason: adjData.reason
-    });
+      await inventoryDB.save({
+        id: generateId(),
+        date: new Date().toISOString(),
+        productId: prod.id,
+        type: 'ajuste',
+        quantity: Math.abs(diff),
+        reason: adjData.reason
+      });
 
-    setIsAdjModalOpen(false);
-    load();
+      toast.success('Stock ajustado correctamente.');
+      setIsAdjModalOpen(false);
+      load();
+    } catch {
+      toast.error('No se pudo completar la operación. Intentá de nuevo.');
+    }
   };
 
   const getProductName = (id: string) => products.find(p => p.id === id)?.name || 'Desconocido';
@@ -98,7 +102,7 @@ export default function Inventory() {
           </div>
           <div className="overflow-y-auto max-h-[500px]">
              <table className="min-w-full text-sm">
-               <thead className="text-[10px] uppercase text-gray-400 font-bold border-b border-gray-50 bg-white sticky top-0"><tr><th className="px-6 py-3 text-left">Producto</th><th className="px-6 py-3 text-right">Stock / Mínimo</th></tr></thead>
+               <thead className="text-[10px] uppercase text-white font-bold bg-brand-navy sticky top-0"><tr><th className="px-6 py-3 text-left">Producto</th><th className="px-6 py-3 text-right">Stock / Mínimo</th></tr></thead>
                <tbody className="text-sm text-gray-600">
                 {filteredProd.map(p => (
                   <tr key={p.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">

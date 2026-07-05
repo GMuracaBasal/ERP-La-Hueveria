@@ -1,22 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { salesDB, productsDB, financeDB } from '../lib/db';
-import { FinanceMovement, Sale, Product } from '../types';
+import { salesDB, productsDB, financeDB, priceListsDB, db } from '../lib/db';
+import { FinanceMovement, Sale, Product, PriceList, Settings } from '../types';
 import { formatCurrency } from '../lib/utils';
 import { format, isToday, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Button, Badge } from '../components/ui';
+import SaleTicketModal from '../components/SaleTicketModal';
 
 export default function Caja() {
   const [finances, setFinances] = useState<FinanceMovement[]>([]);
   const [todaysSales, setTodaysSales] = useState<Sale[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-
-  useEffect(() => {
-    loadData();
-  }, []);
+  const [priceLists, setPriceLists] = useState<PriceList[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
 
   const loadData = async () => {
-    // 1. Cargar ingresos del día actual
     const allFin = await financeDB.getAll();
     const todayIngresos = allFin.filter(f => 
       f.type === 'ingreso' && 
@@ -24,14 +23,18 @@ export default function Caja() {
     );
     setFinances(todayIngresos);
 
-    // 2. Cargar ventas del día de hoy
     const allSales = await salesDB.getAll();
     const tSales = allSales.filter(s => isToday(parseISO(s.date))).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     setTodaysSales(tSales);
 
-    // 3. Cargar catálogo para descripciones
     setProducts(await productsDB.getAll());
+    setPriceLists(await priceListsDB.getAll());
+    setSettings(await db.getSettings());
   };
+
+  useEffect(() => {
+    loadData();
+  }, []);
 
   const getProductName = (productId: string) => {
     return products.find(p => p.id === productId)?.name || 'Desconocido';
@@ -45,7 +48,6 @@ export default function Caja() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Sección 1: Header */}
       <div className="flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-brand-border">
         <div>
           <h1 className="text-2xl font-bold text-brand-brown">Caja del Día</h1>
@@ -59,7 +61,6 @@ export default function Caja() {
         </Button>
       </div>
 
-      {/* Sección 2: Tarjetas de resumen */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-brand-cream rounded-2xl p-6 border border-brand-orange/30 shadow-sm flex flex-col justify-center">
           <p className="text-xs font-bold uppercase tracking-widest text-brand-orange mb-2">Total del Día</p>
@@ -78,7 +79,6 @@ export default function Caja() {
         </div>
       </div>
 
-      {/* Sección 3: Historial */}
       <div className="bg-white rounded-2xl shadow-sm border border-brand-border flex flex-col overflow-hidden">
         <div className="px-6 py-4 border-b border-brand-border flex justify-between items-center bg-brand-cream/30">
           <h2 className="font-bold text-brand-brown flex items-center gap-2">
@@ -99,6 +99,7 @@ export default function Caja() {
                   <th className="px-6 py-3 text-left">Productos</th>
                   <th className="px-6 py-3 text-left">Medio de Pago</th>
                   <th className="px-6 py-3 text-right">Total</th>
+                  <th className="px-6 py-3 text-right">Acción</th>
                 </tr>
               </thead>
               <tbody className="text-sm text-gray-600">
@@ -120,6 +121,11 @@ export default function Caja() {
                       <td className="px-6 py-4 text-right font-bold text-green-700">
                         {formatCurrency(s.total)}
                       </td>
+                      <td className="px-6 py-4 text-right">
+                        <Button variant="ghost" size="sm" onClick={() => setSelectedSale(s)}>
+                          Ver / Editar
+                        </Button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -128,6 +134,17 @@ export default function Caja() {
           )}
         </div>
       </div>
+
+      <SaleTicketModal
+        sale={selectedSale}
+        onClose={() => setSelectedSale(null)}
+        onUpdated={loadData}
+        products={products}
+        customers={[]}
+        priceLists={priceLists}
+        settings={settings}
+        posStyle
+      />
     </div>
   );
 }

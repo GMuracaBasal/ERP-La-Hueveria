@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { suppliersDB } from '../lib/db';
 import { Supplier } from '../types';
-import { Button, ActionButtons, Modal } from '../components/ui';
+import { Button, ActionButtons, Modal, useConfirm, useToast } from '../components/ui';
 import { generateId } from '../lib/utils';
 
 export default function Suppliers() {
+  const { confirm } = useConfirm();
+  const { toast } = useToast();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editing, setEditing] = useState<Supplier | null>(null);
@@ -26,19 +28,34 @@ export default function Suppliers() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editing) {
-      await suppliersDB.save({ ...editing, ...formData });
-    } else {
-      await suppliersDB.save({ id: generateId(), ...formData });
+    try {
+      if (editing) {
+        await suppliersDB.save({ ...editing, ...formData });
+      } else {
+        await suppliersDB.save({ id: generateId(), ...formData });
+      }
+      toast.success(editing ? 'Proveedor actualizado correctamente.' : 'Proveedor creado correctamente.');
+      setIsModalOpen(false);
+      load();
+    } catch {
+      toast.error('No se pudo completar la operación. Intentá de nuevo.');
     }
-    setIsModalOpen(false);
-    load();
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm('¿Eliminar proveedor?')) {
-      await suppliersDB.delete(id);
-      load();
+    const ok = await confirm({
+      title: 'Eliminar proveedor',
+      description: 'Esta acción no se puede deshacer.',
+      confirmLabel: 'Sí, eliminar',
+    });
+    if (ok) {
+      try {
+        await suppliersDB.delete(id);
+        toast.success('Proveedor eliminado correctamente.');
+        load();
+      } catch {
+        toast.error('No se pudo completar la operación. Intentá de nuevo.');
+      }
     }
   };
 
@@ -58,7 +75,7 @@ export default function Suppliers() {
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
-            <thead className="text-[10px] uppercase text-gray-400 font-bold border-b border-gray-50 bg-white">
+            <thead className="text-[10px] uppercase text-white font-bold bg-brand-navy">
               <tr>
                 <th className="px-6 py-3 text-left">Razón Social</th>
                 <th className="px-6 py-3 text-left">Contacto</th>

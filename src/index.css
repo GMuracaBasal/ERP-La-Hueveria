@@ -2,14 +2,31 @@
 @import "tailwindcss";
 
 @theme {
-  --color-brand-cream: #FFF8E7;
-  --color-brand-brown: #8B6914;
-  --color-brand-orange: #F5A623;
+  /* Colores de marca Basal */
+  --color-brand-navy:    #2C3A4E;
+  --color-brand-teja:    #C8703F;
+  --color-brand-slate:   #3D4A5C;
+  --color-brand-durazno: #F5EDE5;
+  --color-brand-bg:      #F4F6F8;
+
+  /* Semánticos */
+  --color-brand-success: #27AE60;
+  --color-brand-warning: #F1C40F;
+  --color-brand-danger:  #E74C3C;
+  --color-brand-text:    #333333;
+  --color-brand-muted:   #666666;
+  --color-brand-border:  #E2E8F0;
+
+  /* Mantener aliases para compatibilidad con POS.tsx y Caja.tsx que usan los nombres viejos */
+  --color-brand-cream:   #F5EDE5;
+  --color-brand-brown:   #2C3A4E;
+  --color-brand-orange:  #C8703F;
+
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
 body {
   font-family: var(--font-sans);
-  background-color: var(--color-brand-cream);
-  color: #1f2937;
+  background-color: var(--color-brand-bg);
+  color: var(--color-brand-text);
 }

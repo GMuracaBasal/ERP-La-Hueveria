@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { productsDB, priceListsDB, inventoryDB } from '../lib/db';
 import { Product } from '../types';
-import { Button, ActionButtons, Modal, Badge, SearchableSelect } from '../components/ui';
+import { Button, ActionButtons, Modal, Badge, SearchableSelect, useConfirm, useToast } from '../components/ui';
 import { generateId, formatCurrency } from '../lib/utils';
 import { format } from 'date-fns';
 
 export default function Products() {
+  const { confirm } = useConfirm();
+  const { toast } = useToast();
   const [products, setProducts] = useState<Product[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -28,38 +30,53 @@ export default function Products() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingProduct) {
-      await productsDB.save({ ...editingProduct, ...formData });
-    } else {
-      const newProduct: Product = { id: generateId(), ...formData };
-      await productsDB.save(newProduct);
-      
-      // Añadir a todas las listas de precios en $0
-      const lists = await priceListsDB.getAll();
-      for (const list of lists) {
-        list.prices[newProduct.id] = 0;
-        await priceListsDB.save(list);
-      }
+    try {
+      if (editingProduct) {
+        await productsDB.save({ ...editingProduct, ...formData });
+      } else {
+        const newProduct: Product = { id: generateId(), ...formData };
+        await productsDB.save(newProduct);
+        
+        // Añadir a todas las listas de precios en $0
+        const lists = await priceListsDB.getAll();
+        for (const list of lists) {
+          list.prices[newProduct.id] = 0;
+          await priceListsDB.save(list);
+        }
 
-      if (newProduct.stock > 0) {
-        await inventoryDB.save({
-          id: generateId(),
-          date: new Date().toISOString(),
-          productId: newProduct.id,
-          type: 'ajuste',
-          quantity: newProduct.stock,
-          reason: 'Ajuste inicial al crear'
-        });
+        if (newProduct.stock > 0) {
+          await inventoryDB.save({
+            id: generateId(),
+            date: new Date().toISOString(),
+            productId: newProduct.id,
+            type: 'ajuste',
+            quantity: newProduct.stock,
+            reason: 'Ajuste inicial al crear'
+          });
+        }
       }
+      toast.success(editingProduct ? 'Producto actualizado correctamente.' : 'Producto creado correctamente.');
+      setIsModalOpen(false);
+      load();
+    } catch {
+      toast.error('No se pudo completar la operación. Intentá de nuevo.');
     }
-    setIsModalOpen(false);
-    load();
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm('¿Eliminar producto?')) {
-      await productsDB.delete(id);
-      load();
+    const ok = await confirm({
+      title: 'Eliminar producto',
+      description: 'Esta acción no se puede deshacer.',
+      confirmLabel: 'Sí, eliminar',
+    });
+    if (ok) {
+      try {
+        await productsDB.delete(id);
+        toast.success('Producto eliminado correctamente.');
+        load();
+      } catch {
+        toast.error('No se pudo completar la operación. Intentá de nuevo.');
+      }
     }
   };
 
@@ -79,7 +96,7 @@ export default function Products() {
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
-            <thead className="text-[10px] uppercase text-gray-400 font-bold border-b border-gray-50 bg-white">
+            <thead className="text-[10px] uppercase text-white font-bold bg-brand-navy">
               <tr>
                 <th className="px-6 py-3 text-left">SKU</th>
                 <th className="px-6 py-3 text-left">Nombre</th>

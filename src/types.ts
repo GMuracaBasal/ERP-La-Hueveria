@@ -76,6 +76,21 @@ export interface Sale {
   paymentMethod: string;
   total: number;
   items: SaleItem[];
+  voided?: boolean;
+  voidedAt?: string | null;
+  voidedBy?: string | null;
+}
+
+export type SaleAuditAction = 'edit' | 'void';
+
+export interface SaleAuditLog {
+  id: string;
+  saleId: string;
+  action: SaleAuditAction;
+  reason: string;
+  performedBy: string;
+  performedAt: string;
+  snapshot?: Record<string, unknown> | null;
 }
 
 export interface InventoryMovement {
@@ -86,6 +101,7 @@ export interface InventoryMovement {
   quantity: number;
   referenceId?: string;
   reason: string;
+  voided?: boolean;
 }
 
 export interface FinanceMovement {
@@ -96,6 +112,7 @@ export interface FinanceMovement {
   paymentMethod?: string;
   amount: number;
   referenceId?: string;
+  voided?: boolean;
 }
 
 export interface Settings {

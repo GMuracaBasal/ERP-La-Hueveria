@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { salesDB, customersDB, productsDB, inventoryDB, financeDB, priceListsDB, db } from '../lib/db';
 import { Sale, SaleItem, Customer, Product, PriceList, Settings } from '../types';
-import { Button, Modal, Badge, SearchableSelect } from '../components/ui';
+import { Button, Modal, Badge, SearchableSelect, useToast } from '../components/ui';
+import SaleTicketModal from '../components/SaleTicketModal';
 import { generateId, formatCurrency } from '../lib/utils';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 export default function Sales() {
+  const { toast } = useToast();
   const [sales, setSales] = useState<Sale[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -15,14 +17,14 @@ export default function Sales() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [detailsModal, setDetailsModal] = useState<Sale | null>(null);
 
-  const [customerId, setCustomerId] = useState(''); // '' = Consumidor Final
+  const [customerId, setCustomerId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Efectivo');
   const [items, setItems] = useState<SaleItem[]>([]);
 
   const [settings, setSettings] = useState<Settings | null>(null);
 
   const load = async () => {
-    const allSales = await salesDB.getAll();
+    const allSales = await salesDB.getAll({ includeVoided: true });
     setSales(allSales.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
     setCustomers(await customersDB.getAll());
     setProducts(await productsDB.getAll());
@@ -35,9 +37,8 @@ export default function Sales() {
     })();
   }, []);
 
-  // Determine current active price list map
   const getActivePrices = (): Record<string, number> => {
-    let targetListId = settings?.defaultPriceListId; // Consumidor final
+    let targetListId = settings?.defaultPriceListId;
     if (customerId) {
       const c = customers.find(c => c.id === customerId);
       if (c && c.priceListId) targetListId = c.priceListId;
@@ -57,16 +58,15 @@ export default function Sales() {
 
   const addItem = () => setItems([...items, { productId: '', quantity: 1, unitPrice: 0, subtotal: 0 }]);
   
-  const updateItem = (index: number, field: keyof SaleItem, value: any) => {
+  const updateItem = (index: number, field: keyof SaleItem, value: string | number) => {
     const newItems = [...items];
     const item = newItems[index];
     
     if (field === 'productId') {
-      item.productId = value;
-      // Pre-cargar precio
-      item.unitPrice = activePrices[value] || 0;
+      item.productId = value as string;
+      item.unitPrice = activePrices[value as string] || 0;
     } else {
-      (item as any)[field] = value;
+      (item as Record<string, unknown>)[field] = value;
     }
     
     item.subtotal = item.quantity * item.unitPrice;
@@ -81,7 +81,6 @@ export default function Sales() {
     e.preventDefault();
     if (items.length === 0 || items.some(i => !i.productId || i.quantity <= 0)) return alert('Agregue productos válidos');
 
-    // Validación de Stock
     for (const item of items) {
       const p = products.find(p => p.id === item.productId);
       if (p && p.stock < item.quantity) {
@@ -89,53 +88,55 @@ export default function Sales() {
       }
     }
 
-    const saleId = generateId();
-    const dateStr = new Date().toISOString();
+    try {
+      const saleId = generateId();
+      const dateStr = new Date().toISOString();
 
-    const sale: Sale = {
-      id: saleId,
-      date: dateStr,
-      customerId: customerId || null,
-      paymentMethod,
-      total,
-      items
-    };
+      const sale: Sale = {
+        id: saleId,
+        date: dateStr,
+        customerId: customerId || null,
+        paymentMethod,
+        total,
+        items
+      };
 
-    // 1. Guardar Venta
-    await salesDB.save(sale);
+      await salesDB.save(sale);
 
-    // 2. Finanzas (Ingreso)
-    await financeDB.save({
-      id: generateId(),
-      date: dateStr,
-      type: 'ingreso',
-      concept: `Venta #${saleId.slice(0,6).toUpperCase()}`,
-      amount: total,
-      paymentMethod,
-      referenceId: saleId
-    });
+      await financeDB.save({
+        id: generateId(),
+        date: dateStr,
+        type: 'ingreso',
+        concept: `Venta #${saleId.slice(0,6).toUpperCase()}`,
+        amount: total,
+        paymentMethod,
+        referenceId: saleId
+      });
 
-    // 3. Inventario (Salidas)
-    for (const item of items) {
-      const dbProd = await productsDB.getById(item.productId);
-      if (dbProd) {
-        dbProd.stock -= item.quantity;
-        await productsDB.save(dbProd);
+      for (const item of items) {
+        const dbProd = await productsDB.getById(item.productId);
+        if (dbProd) {
+          dbProd.stock -= item.quantity;
+          await productsDB.save(dbProd);
 
-        await inventoryDB.save({
-          id: generateId(),
-          date: dateStr,
-          productId: dbProd.id,
-          type: 'salida',
-          quantity: item.quantity,
-          referenceId: saleId,
-          reason: `Venta a ${customerId ? customers.find(c=>c.id === customerId)?.name : 'Consumidor Final'}`
-        });
+          await inventoryDB.save({
+            id: generateId(),
+            date: dateStr,
+            productId: dbProd.id,
+            type: 'salida',
+            quantity: item.quantity,
+            referenceId: saleId,
+            reason: `Venta a ${customerId ? customers.find(c=>c.id === customerId)?.name : 'Consumidor Final'}`
+          });
+        }
       }
-    }
 
-    setIsModalOpen(false);
-    load();
+      toast.success('Venta registrada correctamente.');
+      setIsModalOpen(false);
+      load();
+    } catch {
+      toast.error('No se pudo completar la operación. Intentá de nuevo.');
+    }
   };
 
   return (
@@ -154,24 +155,33 @@ export default function Sales() {
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
-            <thead className="text-[10px] uppercase text-gray-400 font-bold border-b border-gray-50 bg-white">
+            <thead className="text-[10px] uppercase text-white font-bold bg-brand-navy">
               <tr>
                 <th className="px-6 py-3 text-left">Fecha</th>
                 <th className="px-6 py-3 text-left">Cliente</th>
                 <th className="px-6 py-3 text-left">Medio Pago</th>
                 <th className="px-6 py-3 text-left">Total</th>
+                <th className="px-6 py-3 text-left">Estado</th>
                 <th className="px-6 py-3 text-right">Acción</th>
               </tr>
             </thead>
             <tbody className="text-sm text-gray-600">
               {sales.map(s => (
-                <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                <tr
+                  key={s.id}
+                  className={`border-b border-gray-50 hover:bg-gray-50 transition-colors ${s.voided ? 'opacity-60' : ''}`}
+                >
                   <td className="px-6 py-3">{format(new Date(s.date), 'dd MMM yyyy HH:mm', {locale: es})}</td>
                   <td className="px-6 py-3 font-medium text-gray-800">
                     {s.customerId ? customers.find(c=>c.id===s.customerId)?.name : <span className="text-gray-500 italic">Consumidor Final</span>}
                   </td>
                   <td className="px-6 py-3"><Badge variant="default">{s.paymentMethod}</Badge></td>
-                  <td className="px-6 py-3 font-bold text-green-700">{formatCurrency(s.total)}</td>
+                  <td className={`px-6 py-3 font-bold ${s.voided ? 'text-gray-400 line-through' : 'text-green-700'}`}>
+                    {formatCurrency(s.total)}
+                  </td>
+                  <td className="px-6 py-3">
+                    {s.voided ? <Badge variant="danger">ANULADO</Badge> : <Badge variant="success">ACTIVA</Badge>}
+                  </td>
                   <td className="px-6 py-3 text-right">
                     <Button variant="ghost" size="sm" onClick={() => setDetailsModal(s)}>Ver Ticket</Button>
                   </td>
@@ -186,14 +196,13 @@ export default function Sales() {
         <form onSubmit={handleSave} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div><label className="block text-sm mb-1">Cliente</label>
-              {/* Reset items if we change client, because price lists change */}
               <SearchableSelect 
                 options={[
                   { value: '', label: 'Consumidor Final' },
                   ...customers.map(c => ({ value: c.id, label: c.name }))
                 ]}
                 value={customerId ? { value: customerId, label: customers.find(c => c.id === customerId)?.name } : { value: '', label: 'Consumidor Final' }}
-                onChange={(selected: any) => { setCustomerId(selected?.value || ''); setItems([]); }}
+                onChange={(selected: { value: string } | null) => { setCustomerId(selected?.value || ''); setItems([]); }}
                 placeholder="Seleccionar cliente..."
               />
             </div>
@@ -207,7 +216,7 @@ export default function Sales() {
                   { value: 'Cuenta Corriente', label: 'Cuenta Corriente' },
                 ]}
                 value={{ value: paymentMethod, label: paymentMethod }}
-                onChange={(selected: any) => setPaymentMethod(selected?.value || 'Efectivo')}
+                onChange={(selected: { value: string } | null) => setPaymentMethod(selected?.value || 'Efectivo')}
                 placeholder="Seleccionar medio p..."
               />
             </div>
@@ -225,7 +234,7 @@ export default function Sales() {
                     <SearchableSelect
                       options={products.map(p => ({ value: p.id, label: `${p.name} (${p.stock} ${p.unit} disp.)` }))}
                       value={item.productId ? { value: item.productId, label: `${products.find(p => p.id === item.productId)?.name} (${products.find(p => p.id === item.productId)?.stock} ${products.find(p => p.id === item.productId)?.unit} disp.)` } : null}
-                      onChange={(selected: any) => updateItem(index, 'productId', selected?.value || '')}
+                      onChange={(selected: { value: string } | null) => updateItem(index, 'productId', selected?.value || '')}
                       placeholder="Producto..."
                     />
                   </div>
@@ -246,39 +255,15 @@ export default function Sales() {
         </form>
       </Modal>
 
-      <Modal isOpen={!!detailsModal} onClose={() => setDetailsModal(null)} title="Ticket de Venta">
-        {detailsModal && (
-          <div className="space-y-4">
-            <div className="text-center pb-4 border-b border-dashed">
-              <h2 className="text-lg font-bold">{settings?.businessName}</h2>
-              <div className="text-sm text-gray-500">Ticket #{detailsModal.id.slice(0,8).toUpperCase()}</div>
-              <div className="text-sm text-gray-500">{format(new Date(detailsModal.date), "dd/MM/yyyy HH:mm")}</div>
-            </div>
-            <div className="text-sm">
-              <span className="font-semibold">Cliente:</span> {detailsModal.customerId ? customers.find(c=>c.id===detailsModal.customerId)?.name : 'Consumidor Final'}
-              <br/><span className="font-semibold">Pago:</span> {detailsModal.paymentMethod}
-            </div>
-            <div>
-              <table className="w-full text-sm text-left font-mono">
-                <thead><tr className="border-b"><th className="p-1">Desc</th><th className="p-1">Cant</th><th className="p-1">Total</th></tr></thead>
-                <tbody>
-                  {detailsModal.items.map((i, idx) => (
-                    <tr key={idx}>
-                      <td className="p-1 pr-2 truncate max-w-[200px]">{products.find(p=>p.id===i.productId)?.name}</td>
-                      <td className="p-1 text-center">{i.quantity}</td>
-                      <td className="p-1 text-right">{formatCurrency(i.subtotal)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="border-t border-dashed pt-4 flex justify-between items-end font-bold text-lg">
-              <span>TOTAL</span>
-              <span>{formatCurrency(detailsModal.total)}</span>
-            </div>
-          </div>
-        )}
-      </Modal>
+      <SaleTicketModal
+        sale={detailsModal}
+        onClose={() => setDetailsModal(null)}
+        onUpdated={load}
+        products={products}
+        customers={customers}
+        priceLists={priceLists}
+        settings={settings}
+      />
     </div>
   );
 }

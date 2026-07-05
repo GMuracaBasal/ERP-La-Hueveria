@@ -56,16 +56,16 @@ export default function Layout() {
 
       {/* Sidebar */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-30 w-[220px] bg-white border-r border-brand-border transform transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:inset-auto flex flex-col",
+        "fixed inset-y-0 left-0 z-30 w-[220px] bg-brand-navy border-r border-brand-border transform transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:inset-auto flex flex-col",
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
-        <div className="p-6 flex items-center gap-3">
-          <div className="w-10 h-10 bg-brand-orange rounded-xl flex items-center justify-center shadow-lg shadow-brand-orange/30">
+        <div className="p-6 flex items-center gap-3 border-b border-white/10">
+          <div className="w-10 h-10 bg-brand-teja rounded-xl flex items-center justify-center shadow-lg">
             <Egg className="w-6 h-6 text-white" />
           </div>
-          <span className="font-bold text-lg tracking-tight text-brand-brown leading-tight flex flex-col">
+          <span className="font-bold text-lg tracking-tight text-white leading-tight flex flex-col">
             <span className="truncate max-w-[120px]">{settings?.businessName || 'Huevería'}</span>
-            <span className="text-[10px] font-medium text-gray-400 uppercase tracking-widest mt-0.5">Gestión v2.0</span>
+            <span className="text-[10px] font-medium text-white/50 uppercase tracking-widest mt-0.5">Gestión v2.0</span>
           </span>
         </div>
 
@@ -80,9 +80,9 @@ export default function Layout() {
                   onClick={() => setSidebarOpen(false)}
                   className={cn(
                     "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors font-semibold text-sm",
-                    isActive 
-                      ? "bg-brand-cream text-brand-brown" 
-                      : "text-gray-500 hover:bg-gray-50"
+                    isActive
+                      ? "bg-brand-teja text-white"
+                      : "text-white/50 hover:bg-white/7 hover:text-white"
                   )}
                 >
                   <Icon className="w-5 h-5 flex-shrink-0" />
@@ -92,30 +92,46 @@ export default function Layout() {
             })}
         </nav>
 
-        <div className="p-4 border-t border-brand-border mt-auto">
-          <div onClick={handleLogout} className="bg-brand-brown p-3 rounded-lg flex items-center gap-3 text-white cursor-pointer hover:bg-opacity-90">
-            <div className="w-8 h-8 rounded-full bg-brand-orange flex items-center justify-center font-bold flex-shrink-0">
-              {user?.fullName.charAt(0).toUpperCase() || 'U'}
+        <div className="mt-auto">
+          {/* Usuario / logout */}
+          <div className="p-4 border-t border-white/10">
+            <div
+              onClick={handleLogout}
+              className="bg-brand-slate p-3 rounded-lg flex items-center gap-3 text-white cursor-pointer hover:bg-white/10 transition-colors"
+            >
+              <div className="w-8 h-8 rounded-full bg-brand-teja flex items-center justify-center font-bold flex-shrink-0">
+                {user?.fullName.charAt(0).toUpperCase() || 'U'}
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <p className="text-xs font-semibold truncate">{user?.fullName}</p>
+                <p className="text-[10px] opacity-70 italic">Cerrar Sesión</p>
+              </div>
             </div>
-            <div className="flex-1 overflow-hidden">
-              <p className="text-xs font-semibold truncate">{user?.fullName}</p>
-              <p className="text-[10px] opacity-70 italic">Cerrar Sesión</p>
-            </div>
+          </div>
+
+          {/* Marca Basal — obligatoria, no ocultable */}
+          <div className="px-4 pb-4 flex flex-col items-center gap-1">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-white/30">
+              Desarrollado por
+            </p>
+            <p className="text-[11px] font-bold tracking-wider text-white/50">
+              BASAL
+            </p>
           </div>
         </div>
       </aside>
 
       {/* Main content */}
       <div className="flex flex-col flex-1 w-0 overflow-hidden">
-        <header className="relative z-10 flex-shrink-0 h-16 bg-white flex items-center justify-between px-4 sm:px-8 border-b border-brand-border">
+        <header className="relative z-10 flex-shrink-0 h-16 bg-brand-navy flex items-center justify-between px-4 sm:px-8 border-b border-white/10">
           <div className="flex items-center gap-4">
             <button
-              className="lg:hidden p-2 text-gray-500 hover:text-brand-brown transition-colors focus:outline-none"
+              className="lg:hidden p-2 text-white/70 hover:text-white transition-colors focus:outline-none"
               onClick={() => setSidebarOpen(true)}
             >
               <Menu className="h-6 w-6" />
             </button>
-            <h1 className="text-xl font-bold text-brand-brown hidden sm:block">Panel de Control</h1>
+            <h1 className="text-xl font-bold text-white hidden sm:block">Panel de Control</h1>
           </div>
           
           <div className="flex items-center gap-4 sm:gap-6">

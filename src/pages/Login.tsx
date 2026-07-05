@@ -38,7 +38,7 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-brand-cream flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-brand-bg flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center text-brand-orange">
           <Egg className="w-16 h-16" />
@@ -64,7 +64,7 @@ export default function Login() {
                   required
                   value={username}
                   onChange={e => setUsername(e.target.value)}
-                  className="appearance-none block w-full px-4 py-3 border border-brand-border rounded-xl shadow-sm placeholder-gray-400 focus:outline-none focus:ring-brand-orange focus:border-brand-orange sm:text-sm bg-brand-cream/20"
+                  className="appearance-none block w-full px-4 py-3 border border-brand-border rounded-xl shadow-sm placeholder-gray-400 focus:outline-none focus:ring-brand-teja focus:border-brand-teja sm:text-sm bg-brand-cream/20"
                 />
               </div>
             </div>
@@ -79,7 +79,7 @@ export default function Login() {
                   required
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  className="appearance-none block w-full px-4 py-3 border border-brand-border rounded-xl shadow-sm placeholder-gray-400 focus:outline-none focus:ring-brand-orange focus:border-brand-orange sm:text-sm bg-brand-cream/20"
+                  className="appearance-none block w-full px-4 py-3 border border-brand-border rounded-xl shadow-sm placeholder-gray-400 focus:outline-none focus:ring-brand-teja focus:border-brand-teja sm:text-sm bg-brand-cream/20"
                 />
               </div>
             </div>
@@ -91,7 +91,7 @@ export default function Login() {
             <div>
               <button
                 type="submit"
-                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-bold tracking-wide uppercase text-white bg-brand-orange hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-orange transition-all"
+                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-bold tracking-wide uppercase text-white bg-brand-teja hover:bg-[#b5622e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-teja transition-all"
               >
                 Ingresar
               </button>

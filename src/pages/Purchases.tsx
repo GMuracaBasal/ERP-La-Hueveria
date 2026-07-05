@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { purchasesDB, suppliersDB, productsDB, inventoryDB, financeDB } from '../lib/db';
 import { Purchase, PurchaseItem, Supplier, Product } from '../types';
-import { Button, Modal, Badge, SearchableSelect } from '../components/ui';
+import { Button, Modal, Badge, SearchableSelect, useToast } from '../components/ui';
 import { generateId, formatCurrency } from '../lib/utils';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 export default function Purchases() {
+  const { toast } = useToast();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -58,49 +59,54 @@ export default function Purchases() {
     if (!formData.supplierId) return alert('Seleccione un proveedor');
     if (items.length === 0 || items.some(i => !i.productId || i.quantity <= 0)) return alert('agregue productos válidos');
 
-    const p: Purchase = {
-      id: generateId(),
-      date: new Date().toISOString(),
-      ...formData,
-      total,
-      items
-    };
+    try {
+      const p: Purchase = {
+        id: generateId(),
+        date: new Date().toISOString(),
+        ...formData,
+        total,
+        items
+      };
 
-    // 1. Guardar Compra
-    await purchasesDB.save(p);
+      // 1. Guardar Compra
+      await purchasesDB.save(p);
 
-    // 2. Finanzas (Egreso)
-    await financeDB.save({
-      id: generateId(),
-      date: p.date,
-      type: 'egreso',
-      concept: `Compra Proveedor (REF: ${p.invoiceNumber || p.id.slice(0,6)})`,
-      amount: p.total,
-      referenceId: p.id
-    });
+      // 2. Finanzas (Egreso)
+      await financeDB.save({
+        id: generateId(),
+        date: p.date,
+        type: 'egreso',
+        concept: `Compra Proveedor (REF: ${p.invoiceNumber || p.id.slice(0,6)})`,
+        amount: p.total,
+        referenceId: p.id
+      });
 
-    // 3. Inventario y actualización de costo
-    for (const item of items) {
-      const dbProd = await productsDB.getById(item.productId);
-      if (dbProd) {
-        dbProd.stock += item.quantity;
-        dbProd.costPrice = item.unitCost; // Actualiza con ultimo precio de compra
-        await productsDB.save(dbProd);
+      // 3. Inventario y actualización de costo
+      for (const item of items) {
+        const dbProd = await productsDB.getById(item.productId);
+        if (dbProd) {
+          dbProd.stock += item.quantity;
+          dbProd.costPrice = item.unitCost; // Actualiza con ultimo precio de compra
+          await productsDB.save(dbProd);
 
-        await inventoryDB.save({
-          id: generateId(),
-          date: p.date,
-          productId: dbProd.id,
-          type: 'entrada',
-          quantity: item.quantity,
-          referenceId: p.id,
-          reason: `Compra a proveedor`
-        });
+          await inventoryDB.save({
+            id: generateId(),
+            date: p.date,
+            productId: dbProd.id,
+            type: 'entrada',
+            quantity: item.quantity,
+            referenceId: p.id,
+            reason: `Compra a proveedor`
+          });
+        }
       }
-    }
 
-    setIsModalOpen(false);
-    load();
+      toast.success('Compra registrada correctamente.');
+      setIsModalOpen(false);
+      load();
+    } catch {
+      toast.error('No se pudo completar la operación. Intentá de nuevo.');
+    }
   };
 
   return (
@@ -119,7 +125,7 @@ export default function Purchases() {
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
-            <thead className="text-[10px] uppercase text-gray-400 font-bold border-b border-gray-50 bg-white">
+            <thead className="text-[10px] uppercase text-white font-bold bg-brand-navy">
               <tr>
                 <th className="px-6 py-3 text-left">Fecha</th>
                 <th className="px-6 py-3 text-left">Proveedor / Factura</th>

@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { priceListsDB, productsDB } from '../lib/db';
 import { PriceList, Product } from '../types';
-import { Button, ActionButtons, Modal, Badge } from '../components/ui';
+import { Button, ActionButtons, Modal, Badge, useConfirm, useToast } from '../components/ui';
 import { generateId, formatCurrency } from '../lib/utils';
 
 export default function PriceLists() {
+  const { confirm } = useConfirm();
+  const { toast } = useToast();
   const [lists, setLists] = useState<PriceList[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -35,32 +37,46 @@ export default function PriceLists() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Si la gurdada esDefault, hay que quitar default a todas las demas
-    if (formData.isDefault) {
-      for (const l of lists) {
-        if (l.isDefault && (!editing || l.id !== editing.id)) {
-          l.isDefault = false;
-          await priceListsDB.save(l);
+    try {
+      // Si la gurdada esDefault, hay que quitar default a todas las demas
+      if (formData.isDefault) {
+        for (const l of lists) {
+          if (l.isDefault && (!editing || l.id !== editing.id)) {
+            l.isDefault = false;
+            await priceListsDB.save(l);
+          }
         }
       }
-    }
 
-    if (editing) {
-      await priceListsDB.save({ ...editing, ...formData });
-    } else {
-      await priceListsDB.save({ id: generateId(), ...formData });
+      if (editing) {
+        await priceListsDB.save({ ...editing, ...formData });
+      } else {
+        await priceListsDB.save({ id: generateId(), ...formData });
+      }
+      toast.success(editing ? 'Lista de precios actualizada correctamente.' : 'Lista de precios creada correctamente.');
+      setIsModalOpen(false);
+      load();
+    } catch {
+      toast.error('No se pudo completar la operación. Intentá de nuevo.');
     }
-    setIsModalOpen(false);
-    load();
   };
 
   const handleDelete = async (id: string) => {
     const list = lists.find(l => l.id === id);
     if (list?.isDefault) return alert('No puedes eliminar la lista por defecto. Asigna otra primero.');
-    if (confirm('¿Eliminar lista de precios? Esto puede afectar a clientes asignados a ella.')) {
-      await priceListsDB.delete(id);
-      load();
+    const ok = await confirm({
+      title: 'Eliminar lista de precios',
+      description: 'Esta acción no se puede deshacer. Puede afectar a clientes asignados a ella.',
+      confirmLabel: 'Sí, eliminar',
+    });
+    if (ok) {
+      try {
+        await priceListsDB.delete(id);
+        toast.success('Lista de precios eliminada correctamente.');
+        load();
+      } catch {
+        toast.error('No se pudo completar la operación. Intentá de nuevo.');
+      }
     }
   };
 

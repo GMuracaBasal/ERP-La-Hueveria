@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactElement } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { db } from './lib/db';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ToastProvider, ConfirmProvider } from './components/ui';
 import Login from './pages/Login';
 import Layout from './components/Layout';
 
@@ -72,9 +73,13 @@ function AppLogic() {
 export default function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
-        <AppLogic />
-      </BrowserRouter>
+      <ToastProvider>
+        <ConfirmProvider>
+          <BrowserRouter>
+            <AppLogic />
+          </BrowserRouter>
+        </ConfirmProvider>
+      </ToastProvider>
     </AuthProvider>
   );
 }

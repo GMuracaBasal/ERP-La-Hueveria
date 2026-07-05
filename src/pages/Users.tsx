@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { usersDB } from '../lib/db';
 import { User, Role } from '../types';
-import { Button, ActionButtons, Modal, Badge, SearchableSelect } from '../components/ui';
+import { Button, ActionButtons, Modal, Badge, SearchableSelect, useConfirm, useToast } from '../components/ui';
 import { hashPassword, generateId } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Users() {
   const { user: currentUser } = useAuth();
+  const { confirm } = useConfirm();
+  const { toast } = useToast();
   const [users, setUsers] = useState<User[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -29,23 +31,38 @@ export default function Users() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingUser) {
-      const updatedUser = { ...editingUser, fullName: formData.fullName, username: formData.username, role: formData.role };
-      if (formData.password) updatedUser.passwordHash = await hashPassword(formData.password);
-      await usersDB.save(updatedUser);
-    } else {
-      const passwordHash = await hashPassword(formData.password || '123456');
-      await usersDB.save({ id: generateId(), fullName: formData.fullName, username: formData.username, passwordHash, role: formData.role });
+    try {
+      if (editingUser) {
+        const updatedUser = { ...editingUser, fullName: formData.fullName, username: formData.username, role: formData.role };
+        if (formData.password) updatedUser.passwordHash = await hashPassword(formData.password);
+        await usersDB.save(updatedUser);
+      } else {
+        const passwordHash = await hashPassword(formData.password || '123456');
+        await usersDB.save({ id: generateId(), fullName: formData.fullName, username: formData.username, passwordHash, role: formData.role });
+      }
+      toast.success(editingUser ? 'Usuario actualizado correctamente.' : 'Usuario creado correctamente.');
+      setIsModalOpen(false);
+      loadUsers();
+    } catch {
+      toast.error('No se pudo completar la operación. Intentá de nuevo.');
     }
-    setIsModalOpen(false);
-    loadUsers();
   };
 
   const handleDelete = async (id: string) => {
     if (id === currentUser?.id) return alert('No puedes eliminar tu propio usuario');
-    if (confirm('¿Eliminar usuario?')) {
-      await usersDB.delete(id);
-      loadUsers();
+    const ok = await confirm({
+      title: 'Eliminar usuario',
+      description: 'Esta acción no se puede deshacer.',
+      confirmLabel: 'Sí, eliminar',
+    });
+    if (ok) {
+      try {
+        await usersDB.delete(id);
+        toast.success('Usuario eliminado correctamente.');
+        loadUsers();
+      } catch {
+        toast.error('No se pudo completar la operación. Intentá de nuevo.');
+      }
     }
   };
 
@@ -65,7 +82,7 @@ export default function Users() {
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
-            <thead className="text-[10px] uppercase text-gray-400 font-bold border-b border-gray-50 bg-white">
+            <thead className="text-[10px] uppercase text-white font-bold bg-brand-navy">
               <tr>
                 <th className="px-6 py-3 text-left">Nombre</th>
                 <th className="px-6 py-3 text-left">Usuario</th>

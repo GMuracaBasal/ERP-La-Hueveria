@@ -37,19 +37,23 @@ const mapUserToDB = (u: User) => ({
 const mapInventoryFromDB = (r: any): InventoryMovement => ({
   id: r.id, date: r.date, productId: r.product_id, type: r.type,
   quantity: Number(r.quantity), referenceId: r.reference_id, reason: r.reason,
+  voided: r.voided ?? false,
 });
 const mapInventoryToDB = (m: InventoryMovement) => ({
   id: m.id, date: m.date, product_id: m.productId, type: m.type,
   quantity: m.quantity, reference_id: m.referenceId, reason: m.reason,
+  voided: m.voided ?? false,
 });
 
 const mapFinanceFromDB = (r: any): FinanceMovement => ({
   id: r.id, date: r.date, type: r.type, concept: r.concept,
   paymentMethod: r.payment_method, amount: Number(r.amount), referenceId: r.reference_id,
+  voided: r.voided ?? false,
 });
 const mapFinanceToDB = (m: FinanceMovement) => ({
   id: m.id, date: m.date, type: m.type, concept: m.concept,
   payment_method: m.paymentMethod, amount: m.amount, reference_id: m.referenceId,
+  voided: m.voided ?? false,
 });
 
 const mapSupplierToDB = (s: Supplier) => ({ ...s });
@@ -87,8 +91,23 @@ export const usersDB     = simpleCRUD<User>('users', mapUserFromDB, mapUserToDB)
 export const productsDB  = simpleCRUD<Product>('products', mapProductFromDB, mapProductToDB);
 export const suppliersDB = simpleCRUD<Supplier>('suppliers', undefined, mapSupplierToDB);
 export const customersDB = simpleCRUD<Customer>('customers', mapCustomerFromDB, mapCustomerToDB);
-export const inventoryDB = simpleCRUD<InventoryMovement>('inventory_movements', mapInventoryFromDB, mapInventoryToDB);
-export const financeDB   = simpleCRUD<FinanceMovement>('finance_movements', mapFinanceFromDB, mapFinanceToDB);
+export const inventoryDB = {
+  ...simpleCRUD<InventoryMovement>('inventory_movements', mapInventoryFromDB, mapInventoryToDB),
+  async getAll(): Promise<InventoryMovement[]> {
+    const { data, error } = await supabase.from('inventory_movements').select('*').eq('voided', false);
+    if (error) throw error;
+    return (data ?? []).map(mapInventoryFromDB);
+  },
+};
+
+export const financeDB = {
+  ...simpleCRUD<FinanceMovement>('finance_movements', mapFinanceFromDB, mapFinanceToDB),
+  async getAll(): Promise<FinanceMovement[]> {
+    const { data, error } = await supabase.from('finance_movements').select('*').eq('voided', false);
+    if (error) throw error;
+    return (data ?? []).map(mapFinanceFromDB);
+  },
+};
 
 // ─── Listas de precios (reconstruye el objeto `prices` desde la tabla hija) ──
 
@@ -185,32 +204,47 @@ export const purchasesDB = {
 
 // ─── Ventas (con items en tabla hija) ────────────────────────────────
 
+const mapSaleFromDB = (s: any): Sale => ({
+  id: s.id,
+  date: s.date,
+  customerId: s.customer_id,
+  paymentMethod: s.payment_method,
+  total: Number(s.total),
+  voided: s.voided ?? false,
+  voidedAt: s.voided_at ?? null,
+  voidedBy: s.voided_by ?? null,
+  items: (s.sale_items ?? []).map((it: any) => ({
+    productId: it.product_id,
+    quantity: Number(it.quantity),
+    unitPrice: Number(it.unit_price),
+    subtotal: Number(it.subtotal),
+  })),
+});
+
 export const salesDB = {
-  async getAll(): Promise<Sale[]> {
-    const { data, error } = await supabase
-      .from('sales')
-      .select('*, sale_items(*)')
-      .eq('voided', false);
+  async getAll(options?: { includeVoided?: boolean }): Promise<Sale[]> {
+    let query = supabase.from('sales').select('*, sale_items(*)');
+    if (!options?.includeVoided) {
+      query = query.eq('voided', false);
+    }
+    const { data, error } = await query;
     if (error) throw error;
-    return (data ?? []).map((s) => ({
-      id: s.id, date: s.date, customerId: s.customer_id,
-      paymentMethod: s.payment_method, total: Number(s.total),
-      items: (s.sale_items ?? []).map((it: any) => ({
-        productId: it.product_id, quantity: Number(it.quantity),
-        unitPrice: Number(it.unit_price), subtotal: Number(it.subtotal),
-      })),
-    }));
+    return (data ?? []).map(mapSaleFromDB);
   },
 
-  async getById(id: string): Promise<Sale | undefined> {
-    const all = await this.getAll();
-    return all.find((s) => s.id === id);
+  async getById(id: string, includeVoided = false): Promise<Sale | undefined> {
+    let query = supabase.from('sales').select('*, sale_items(*)').eq('id', id);
+    if (!includeVoided) query = query.eq('voided', false);
+    const { data, error } = await query.maybeSingle();
+    if (error) throw error;
+    return data ? mapSaleFromDB(data) : undefined;
   },
 
   async save(sale: Sale): Promise<void> {
     const { error } = await supabase.from('sales').upsert({
       id: sale.id, date: sale.date, customer_id: sale.customerId,
       payment_method: sale.paymentMethod, total: sale.total,
+      voided: sale.voided ?? false,
     });
     if (error) throw error;
 
@@ -225,8 +259,41 @@ export const salesDB = {
     }
   },
 
+  /** @deprecated Usar voidSale() — anula solo la fila sin revertir stock/finanzas */
   async delete(id: string): Promise<void> {
     const { error } = await supabase.from('sales').update({ voided: true }).eq('id', id);
+    if (error) throw error;
+  },
+
+  async voidSale(saleId: string, userId: string, reason: string): Promise<void> {
+    const { error } = await supabase.rpc('void_sale', {
+      p_sale_id: saleId,
+      p_user_id: userId,
+      p_reason: reason.trim(),
+    });
+    if (error) throw error;
+  },
+
+  async editSale(
+    saleId: string,
+    userId: string,
+    reason: string,
+    sale: Pick<Sale, 'customerId' | 'paymentMethod' | 'date' | 'items'>,
+  ): Promise<void> {
+    const { error } = await supabase.rpc('edit_sale', {
+      p_sale_id: saleId,
+      p_user_id: userId,
+      p_reason: reason.trim(),
+      p_payment_method: sale.paymentMethod,
+      p_customer_id: sale.customerId,
+      p_date: sale.date,
+      p_items: sale.items.map((it) => ({
+        product_id: it.productId,
+        quantity: it.quantity,
+        unit_price: it.unitPrice,
+        subtotal: it.subtotal,
+      })),
+    });
     if (error) throw error;
   },
 };

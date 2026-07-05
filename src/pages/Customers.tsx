@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { customersDB, priceListsDB } from '../lib/db';
 import { Customer, PriceList } from '../types';
-import { Button, ActionButtons, Modal, Badge, SearchableSelect } from '../components/ui';
+import { Button, ActionButtons, Modal, Badge, SearchableSelect, useConfirm, useToast } from '../components/ui';
 import { generateId } from '../lib/utils';
 
 export default function Customers() {
+  const { confirm } = useConfirm();
+  const { toast } = useToast();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [lists, setLists] = useState<PriceList[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -31,20 +33,35 @@ export default function Customers() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    const dataToSave = { ...formData, priceListId: formData.priceListId || null };
-    if (editing) {
-      await customersDB.save({ ...editing, ...dataToSave });
-    } else {
-      await customersDB.save({ id: generateId(), ...dataToSave });
+    try {
+      const dataToSave = { ...formData, priceListId: formData.priceListId || null };
+      if (editing) {
+        await customersDB.save({ ...editing, ...dataToSave });
+      } else {
+        await customersDB.save({ id: generateId(), ...dataToSave });
+      }
+      toast.success(editing ? 'Cliente actualizado correctamente.' : 'Cliente creado correctamente.');
+      setIsModalOpen(false);
+      load();
+    } catch {
+      toast.error('No se pudo completar la operación. Intentá de nuevo.');
     }
-    setIsModalOpen(false);
-    load();
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm('¿Eliminar cliente?')) {
-      await customersDB.delete(id);
-      load();
+    const ok = await confirm({
+      title: 'Eliminar cliente',
+      description: 'Esta acción no se puede deshacer.',
+      confirmLabel: 'Sí, eliminar',
+    });
+    if (ok) {
+      try {
+        await customersDB.delete(id);
+        toast.success('Cliente eliminado correctamente.');
+        load();
+      } catch {
+        toast.error('No se pudo completar la operación. Intentá de nuevo.');
+      }
     }
   };
 
@@ -69,7 +86,7 @@ export default function Customers() {
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
-            <thead className="text-[10px] uppercase text-gray-400 font-bold border-b border-gray-50 bg-white">
+            <thead className="text-[10px] uppercase text-white font-bold bg-brand-navy">
               <tr>
                 <th className="px-6 py-3 text-left">Razón Social</th>
                 <th className="px-6 py-3 text-left">Contacto</th>
