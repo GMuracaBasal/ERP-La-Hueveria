@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { generateId } from './utils';
 import {
   User, Product, PriceList, Supplier, Customer,
   Purchase, Sale, InventoryMovement, FinanceMovement, Settings
@@ -221,6 +222,87 @@ const mapSaleFromDB = (s: any): Sale => ({
   })),
 });
 
+async function voidInventoryMovementsForSale(saleId: string): Promise<void> {
+  const { data, error } = await supabase
+    .from('inventory_movements')
+    .select('*')
+    .eq('reference_id', saleId)
+    .eq('voided', false);
+  if (error) throw error;
+
+  for (const mov of data ?? []) {
+    const prod = await productsDB.getById(mov.product_id);
+    if (prod) {
+      const delta = mov.type === 'salida' ? Number(mov.quantity) : mov.type === 'entrada' ? -Number(mov.quantity) : 0;
+      if (delta !== 0) {
+        await productsDB.save({ ...prod, stock: prod.stock + delta });
+      }
+    }
+    const { error: uErr } = await supabase
+      .from('inventory_movements')
+      .update({ voided: true })
+      .eq('id', mov.id);
+    if (uErr) throw uErr;
+  }
+}
+
+async function voidFinanceMovementsForSale(saleId: string): Promise<string | null> {
+  const { data: activeRows, error: selErr } = await supabase
+    .from('finance_movements')
+    .select('concept')
+    .eq('reference_id', saleId)
+    .eq('type', 'ingreso')
+    .eq('voided', false)
+    .order('date', { ascending: false })
+    .limit(1);
+  if (selErr) throw selErr;
+
+  const concept = activeRows?.[0]?.concept ?? null;
+
+  const { error } = await supabase
+    .from('finance_movements')
+    .update({ voided: true })
+    .eq('reference_id', saleId)
+    .eq('voided', false);
+  if (error) throw error;
+
+  return concept;
+}
+
+async function insertSaleAuditLog(entry: {
+  saleId: string;
+  action: 'edit' | 'void';
+  reason: string;
+  performedBy: string;
+  snapshot?: unknown;
+}): Promise<void> {
+  const { error } = await supabase.from('sale_audit_log').insert({
+    sale_id: entry.saleId,
+    action: entry.action,
+    reason: entry.reason.trim(),
+    performed_by: entry.performedBy,
+    snapshot: entry.snapshot ?? null,
+  });
+  if (error) {
+    // Tabla de auditoría opcional si la migración aún no corrió
+    if (error.code === 'PGRST205' || error.message?.includes('sale_audit_log')) return;
+    throw error;
+  }
+}
+
+async function markSaleVoided(saleId: string, userId: string): Promise<void> {
+  const payload = {
+    voided: true,
+    voided_at: new Date().toISOString(),
+    voided_by: userId,
+  };
+  let { error } = await supabase.from('sales').update(payload).eq('id', saleId);
+  if (error?.message?.includes('voided_at') || error?.message?.includes('voided_by')) {
+    ({ error } = await supabase.from('sales').update({ voided: true }).eq('id', saleId));
+  }
+  if (error) throw error;
+}
+
 export const salesDB = {
   async getAll(options?: { includeVoided?: boolean }): Promise<Sale[]> {
     let query = supabase.from('sales').select('*, sale_items(*)');
@@ -266,12 +348,25 @@ export const salesDB = {
   },
 
   async voidSale(saleId: string, userId: string, reason: string): Promise<void> {
-    const { error } = await supabase.rpc('void_sale', {
-      p_sale_id: saleId,
-      p_user_id: userId,
-      p_reason: reason.trim(),
+    if (!reason.trim()) throw new Error('REASON_REQUIRED');
+
+    const sale = await this.getById(saleId, true);
+    if (!sale) throw new Error('SALE_NOT_FOUND');
+    if (sale.voided) throw new Error('SALE_ALREADY_VOIDED');
+    if (sale.paymentMethod === 'Cuenta Corriente') throw new Error('NOT_MOSTRADOR_SALE');
+
+    const snapshot = { sale, items: sale.items };
+
+    await voidInventoryMovementsForSale(saleId);
+    await voidFinanceMovementsForSale(saleId);
+    await markSaleVoided(saleId, userId);
+    await insertSaleAuditLog({
+      saleId,
+      action: 'void',
+      reason,
+      performedBy: userId,
+      snapshot,
     });
-    if (error) throw error;
   },
 
   async editSale(
@@ -280,21 +375,91 @@ export const salesDB = {
     reason: string,
     sale: Pick<Sale, 'customerId' | 'paymentMethod' | 'date' | 'items'>,
   ): Promise<void> {
-    const { error } = await supabase.rpc('edit_sale', {
-      p_sale_id: saleId,
-      p_user_id: userId,
-      p_reason: reason.trim(),
-      p_payment_method: sale.paymentMethod,
-      p_customer_id: sale.customerId,
-      p_date: sale.date,
-      p_items: sale.items.map((it) => ({
-        product_id: it.productId,
-        quantity: it.quantity,
-        unit_price: it.unitPrice,
-        subtotal: it.subtotal,
-      })),
+    if (!reason.trim()) throw new Error('REASON_REQUIRED');
+    if (!sale.items.length || sale.items.some((i) => !i.productId || i.quantity <= 0)) {
+      throw new Error('INVALID_ITEMS');
+    }
+    if (sale.paymentMethod === 'Cuenta Corriente') throw new Error('NOT_MOSTRADOR_SALE');
+
+    const existing = await this.getById(saleId);
+    if (!existing) throw new Error('SALE_NOT_FOUND');
+    if (existing.voided) throw new Error('SALE_ALREADY_VOIDED');
+    if (existing.paymentMethod === 'Cuenta Corriente') throw new Error('NOT_MOSTRADOR_SALE');
+
+    const snapshot = { sale: existing, items: existing.items };
+
+    const preservedConcept = await voidFinanceMovementsForSale(saleId);
+    await voidInventoryMovementsForSale(saleId);
+
+    for (const item of sale.items) {
+      const prod = await productsDB.getById(item.productId);
+      if (!prod || prod.stock < item.quantity) throw new Error('INSUFFICIENT_STOCK');
+    }
+
+    const total = sale.items.reduce((acc, i) => acc + i.subtotal, 0);
+
+    const { error: headerErr } = await supabase.from('sales').update({
+      customer_id: sale.customerId,
+      payment_method: sale.paymentMethod,
+      total,
+      date: sale.date,
+    }).eq('id', saleId);
+    if (headerErr) throw headerErr;
+
+    await supabase.from('sale_items').delete().eq('sale_id', saleId);
+    const itemRows = sale.items.map((it) => ({
+      sale_id: saleId,
+      product_id: it.productId,
+      quantity: it.quantity,
+      unit_price: it.unitPrice,
+      subtotal: it.subtotal,
+    }));
+    if (itemRows.length > 0) {
+      const { error: itemsErr } = await supabase.from('sale_items').insert(itemRows);
+      if (itemsErr) throw itemsErr;
+    }
+
+    const concept = preservedConcept ?? (
+      sale.customerId === null
+        ? `Venta POS #${saleId.slice(0, 6).toUpperCase()}`
+        : `Venta #${saleId.slice(0, 6).toUpperCase()}`
+    );
+
+    await financeDB.save({
+      id: generateId(),
+      date: sale.date,
+      type: 'ingreso',
+      concept,
+      amount: total,
+      paymentMethod: sale.paymentMethod,
+      referenceId: saleId,
     });
-    if (error) throw error;
+
+    for (const item of sale.items) {
+      const prod = await productsDB.getById(item.productId);
+      if (!prod) throw new Error('PRODUCT_NOT_FOUND');
+
+      await productsDB.save({ ...prod, stock: prod.stock - item.quantity });
+      await inventoryDB.save({
+        id: generateId(),
+        date: sale.date,
+        productId: prod.id,
+        type: 'salida',
+        quantity: item.quantity,
+        referenceId: saleId,
+        reason: sale.customerId === null
+          ? 'Venta POS - Consumidor Final'
+          : 'Venta a cliente registrado',
+      });
+    }
+
+    await insertSaleAuditLog({
+      saleId,
+      action: 'edit',
+      reason,
+      performedBy: userId,
+      snapshot,
+    });
   },
 };
 

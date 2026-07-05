@@ -62,6 +62,36 @@ export const Button = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttrib
 Button.displayName = 'Button';
 
 // ─────────────────────────────────────────────────────────
+// ANTI-AUTOFILL INPUT (formularios de alta — no usar en Login)
+// Evita que el navegador pre-cargue credenciales guardadas.
+// ─────────────────────────────────────────────────────────
+export function AntiAutofillInput({
+  className,
+  antiAutofill = true,
+  onFocus,
+  readOnly: readOnlyProp,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & { antiAutofill?: boolean }) {
+  const [readOnly, setReadOnly] = useState(antiAutofill);
+
+  useEffect(() => {
+    if (antiAutofill) setReadOnly(true);
+  }, [antiAutofill, props.name, props.type]);
+
+  return (
+    <input
+      {...props}
+      readOnly={readOnlyProp ?? (antiAutofill && readOnly)}
+      onFocus={(e) => {
+        if (antiAutofill) setReadOnly(false);
+        onFocus?.(e);
+      }}
+      className={cn(className)}
+    />
+  );
+}
+
+// ─────────────────────────────────────────────────────────
 // ACTION BUTTONS (sin cambios)
 // ─────────────────────────────────────────────────────────
 export function ActionButtons({ onEdit, onDelete }: { onEdit?: () => void, onDelete?: () => void }) {

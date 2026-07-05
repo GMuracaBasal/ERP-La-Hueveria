@@ -138,7 +138,11 @@ export default function SaleTicketModal({
         items,
       });
       toast.success('Venta actualizada correctamente.');
-      onUpdated();
+      try {
+        await Promise.resolve(onUpdated());
+      } catch {
+        // La venta ya se guardó; cerrar igual aunque falle el refresh
+      }
       onClose();
     } catch (err) {
       toast.error(getSaleRpcErrorMessage(err));
@@ -157,7 +161,11 @@ export default function SaleTicketModal({
     try {
       await salesDB.voidSale(sale.id, user.id, voidReason);
       toast.success('Venta anulada correctamente.');
-      onUpdated();
+      try {
+        await Promise.resolve(onUpdated());
+      } catch {
+        // La venta ya se anuló; cerrar igual aunque falle el refresh
+      }
       onClose();
     } catch (err) {
       toast.error(getSaleRpcErrorMessage(err));
@@ -351,7 +359,7 @@ export default function SaleTicketModal({
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={() => setMode('view')}>
+            <Button type="button" variant="secondary" onClick={onClose}>
               Cancelar
             </Button>
             <Button type="submit" disabled={submitting}>
@@ -383,7 +391,7 @@ export default function SaleTicketModal({
             />
           </div>
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" autoFocus onClick={() => setMode('view')}>
+            <Button variant="secondary" autoFocus onClick={onClose}>
               Cancelar
             </Button>
             <Button variant="danger" disabled={submitting} onClick={handleVoid}>

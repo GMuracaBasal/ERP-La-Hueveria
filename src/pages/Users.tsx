@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { usersDB } from '../lib/db';
 import { User, Role } from '../types';
-import { Button, ActionButtons, Modal, Badge, SearchableSelect, useConfirm, useToast } from '../components/ui';
+import { Button, ActionButtons, Modal, Badge, SearchableSelect, AntiAutofillInput, useConfirm, useToast } from '../components/ui';
 import { hashPassword, generateId } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -29,6 +29,12 @@ export default function Users() {
     setIsModalOpen(true);
   };
 
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setEditingUser(null);
+    setFormData({ fullName: '', username: '', password: '', role: 'vendedor' });
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -41,7 +47,7 @@ export default function Users() {
         await usersDB.save({ id: generateId(), fullName: formData.fullName, username: formData.username, passwordHash, role: formData.role });
       }
       toast.success(editingUser ? 'Usuario actualizado correctamente.' : 'Usuario creado correctamente.');
-      setIsModalOpen(false);
+      handleCloseModal();
       loadUsers();
     } catch {
       toast.error('No se pudo completar la operación. Intentá de nuevo.');
@@ -106,11 +112,49 @@ export default function Users() {
         </div>
       </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingUser ? 'Editar Usuario' : 'Nuevo Usuario'}>
-        <form onSubmit={handleSave} className="space-y-4">
-          <div><label className="block text-sm mb-1">Nombre Completo</label><input required className="w-full border p-2 rounded-lg" value={formData.fullName} onChange={e => setFormData({...formData, fullName: e.target.value})} /></div>
-          <div><label className="block text-sm mb-1">Nombre de Usuario</label><input required className="w-full border p-2 rounded-lg" value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} /></div>
-          <div><label className="block text-sm mb-1">Contraseña {editingUser && '(Dejar en blanco para no cambiar)'}</label><input type="password" required={!editingUser} className="w-full border p-2 rounded-lg" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} /></div>
+      <Modal isOpen={isModalOpen} onClose={handleCloseModal} title={editingUser ? 'Editar Usuario' : 'Nuevo Usuario'}>
+        <form
+          key={editingUser?.id ?? 'create'}
+          onSubmit={handleSave}
+          autoComplete="off"
+          className="space-y-4"
+        >
+          <div>
+            <label className="block text-sm mb-1">Nombre Completo</label>
+            <AntiAutofillInput
+              required
+              name="nuevo-nombre-completo"
+              autoComplete="off"
+              className="w-full border p-2 rounded-lg"
+              value={formData.fullName}
+              onChange={e => setFormData({ ...formData, fullName: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Nombre de Usuario</label>
+            <AntiAutofillInput
+              required
+              name="nuevo-usuario"
+              autoComplete="off"
+              className="w-full border p-2 rounded-lg"
+              value={formData.username}
+              onChange={e => setFormData({ ...formData, username: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-sm mb-1">
+              Contraseña {editingUser && '(Dejar en blanco para no cambiar)'}
+            </label>
+            <AntiAutofillInput
+              type="password"
+              required={!editingUser}
+              name="nueva-contrasena"
+              autoComplete="new-password"
+              className="w-full border p-2 rounded-lg"
+              value={formData.password}
+              onChange={e => setFormData({ ...formData, password: e.target.value })}
+            />
+          </div>
           <div><label className="block text-sm mb-1">Rol</label>
             <SearchableSelect 
               options={[
@@ -121,7 +165,10 @@ export default function Users() {
               onChange={(selected: any) => setFormData({...formData, role: selected?.value as Role || 'vendedor'})}
             />
           </div>
-          <div className="flex justify-end gap-2 mt-4"><Button variant="secondary" type="button" onClick={() => setIsModalOpen(false)}>Cancelar</Button><Button type="submit">Guardar</Button></div>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="secondary" type="button" onClick={handleCloseModal}>Cancelar</Button>
+            <Button type="submit">Guardar</Button>
+          </div>
         </form>
       </Modal>
     </div>

@@ -16,8 +16,16 @@ export function canModifySale(user: User | null | undefined, sale: Sale): boolea
   return false;
 }
 
+function extractErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    return String((err as { message: unknown }).message);
+  }
+  return String(err);
+}
+
 export function getSaleRpcErrorMessage(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err);
+  const msg = extractErrorMessage(err);
   if (msg.includes('PERMISSION_DENIED')) return PERMISSION_DENIED_MSG;
   if (msg.includes('SALE_ALREADY_VOIDED')) return 'Esta venta ya fue anulada.';
   if (msg.includes('REASON_REQUIRED')) return 'Debés indicar un motivo.';
@@ -30,5 +38,11 @@ export function getSaleRpcErrorMessage(err: unknown): string {
   if (msg.includes('INVALID_ITEMS') || msg.includes('ITEMS_REQUIRED')) {
     return 'Agregá al menos un producto válido.';
   }
-  return 'No se pudo completar la operación. Intentá de nuevo.';
+  if (msg.includes('voided') && msg.includes('does not exist')) {
+    return 'Falta aplicar la migración de Supabase (columna voided). Contactá al administrador.';
+  }
+  if (msg.includes('PGRST202') || msg.includes('Could not find the function')) {
+    return 'No se pudo completar la operación. Intentá de nuevo.';
+  }
+  return msg || 'No se pudo completar la operación. Intentá de nuevo.';
 }
