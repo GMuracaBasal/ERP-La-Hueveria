@@ -10,6 +10,7 @@ import {
 import { db } from '../lib/db';
 import { Settings } from '../types';
 import { Button } from './ui';
+import { BasalLogo } from './BasalLogo';
 import { MODULES, canAccess } from '../lib/modules';
 
 const ICONS: Record<string, any> = {
@@ -57,7 +58,7 @@ export default function Layout() {
 
       {/* Sidebar */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-30 w-[220px] bg-brand-navy border-r border-brand-border transform transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:inset-auto flex flex-col",
+        "fixed inset-y-0 left-0 z-30 w-[220px] bg-brand-dark border-r border-white/10 transform transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:inset-auto flex flex-col",
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="p-6 flex items-center gap-3 border-b border-white/10">
@@ -98,7 +99,7 @@ export default function Layout() {
           <div className="p-4 border-t border-white/10">
             <div
               onClick={handleLogout}
-              className="bg-brand-slate p-3 rounded-lg flex items-center gap-3 text-white cursor-pointer hover:bg-white/10 transition-colors"
+              className="bg-brand-bg2 p-3 rounded-lg flex items-center gap-3 text-white cursor-pointer hover:bg-white/10 transition-colors"
             >
               <div className="w-8 h-8 rounded-full bg-brand-teja flex items-center justify-center font-bold flex-shrink-0">
                 {user?.fullName.charAt(0).toUpperCase() || 'U'}
@@ -111,20 +112,20 @@ export default function Layout() {
           </div>
 
           {/* Marca Basal — obligatoria, no ocultable */}
-          <div className="px-4 pb-4 flex flex-col items-center gap-1">
+          <div className="px-4 pb-4 flex flex-col items-center gap-1.5">
             <p className="text-[9px] font-bold uppercase tracking-widest text-white/30">
               Desarrollado por
             </p>
-            <p className="text-[11px] font-bold tracking-wider text-white/50">
-              BASAL
-            </p>
+            <div className="bg-brand-cream rounded-md px-3 py-1.5 w-fit mx-auto">
+              <BasalLogo />
+            </div>
           </div>
         </div>
       </aside>
 
       {/* Main content */}
       <div className="flex flex-col flex-1 w-0 overflow-hidden">
-        <header className="relative z-10 flex-shrink-0 h-16 bg-brand-navy flex items-center justify-between px-4 sm:px-8 border-b border-white/10">
+        <header className="relative z-10 flex-shrink-0 h-16 bg-brand-dark flex items-center justify-between px-4 sm:px-8 border-b border-white/10">
           <div className="flex items-center gap-4">
             <button
               className="lg:hidden p-2 text-white/70 hover:text-white transition-colors focus:outline-none"

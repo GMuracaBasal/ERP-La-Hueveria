@@ -15,16 +15,16 @@ export function SearchableSelect<Option = unknown, IsMulti extends boolean = fal
         menuPortal: base => ({ ...base, zIndex: 9999 }),
         control: (base, state) => ({
           ...base,
-          borderColor: state.isFocused ? '#C8703F' : '#E2E8F0',
+          borderColor: state.isFocused ? '#C8703F' : '#D8D0C6',
           boxShadow: state.isFocused ? '0 0 0 1px #C8703F' : 'none',
-          '&:hover': { borderColor: state.isFocused ? '#C8703F' : '#cbd5e1' },
+          '&:hover': { borderColor: state.isFocused ? '#C8703F' : '#7A8A9A' },
           borderRadius: '0.375rem',
           padding: '2px',
         }),
         option: (base, state) => ({
           ...base,
-          backgroundColor: state.isSelected ? '#C8703F' : state.isFocused ? '#F5EDE5' : 'white',
-          color: state.isSelected ? 'white' : '#333333',
+          backgroundColor: state.isSelected ? '#C8703F' : state.isFocused ? '#F0EBE3' : 'white',
+          color: state.isSelected ? 'white' : '#1A1F2E',
           '&:active': { backgroundColor: '#b5622e' },
         }),
       }}
