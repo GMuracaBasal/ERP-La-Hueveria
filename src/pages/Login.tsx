@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { usersDB } from '../lib/db';
 import { hashPassword } from '../lib/utils';
+import { firstAllowedPath } from '../lib/modules';
 import { Egg } from 'lucide-react';
 
 export default function Login() {
@@ -23,15 +24,13 @@ export default function Login() {
 
     const hashed = await hashPassword(password);
     const users = await usersDB.getAll();
-    const user = users.find(u => u.username === username && u.passwordHash === hashed);
+    const user = users.find(
+      (u) => u.username === username && u.passwordHash === hashed && u.active
+    );
 
     if (user) {
       login(user);
-      if (user.role === 'vendedor') {
-        navigate('/pos');
-      } else {
-        navigate('/');
-      }
+      navigate(firstAllowedPath(user));
     } else {
       setError('Usuario o contraseña incorrectos.');
     }

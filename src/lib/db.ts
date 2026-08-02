@@ -29,10 +29,16 @@ const mapCustomerToDB = (c: Customer) => ({
 const mapUserFromDB = (r: any): User => ({
   id: r.id, fullName: r.full_name, username: r.username,
   passwordHash: r.password_hash, role: r.role,
+  email: r.email ?? null,
+  active: r.active ?? true,
+  modules: r.modules || [],
 });
 const mapUserToDB = (u: User) => ({
   id: u.id, full_name: u.fullName, username: u.username,
   password_hash: u.passwordHash, role: u.role,
+  email: u.email || null,
+  active: u.active,
+  modules: u.modules,
 });
 
 const mapInventoryFromDB = (r: any): InventoryMovement => ({

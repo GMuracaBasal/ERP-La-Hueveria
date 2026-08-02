@@ -5,11 +5,18 @@ import { cn } from '../lib/utils';
 import {
   Home, Package, DollarSign, Truck, Users,
   ShoppingCart, FileText, Activity, PieChart,
-  LogOut, Menu, X, Egg
+  Menu, Egg
 } from 'lucide-react';
 import { db } from '../lib/db';
 import { Settings } from '../types';
 import { Button } from './ui';
+import { MODULES, canAccess } from '../lib/modules';
+
+const ICONS: Record<string, any> = {
+  inicio: Home, ventas: FileText, pos: ShoppingCart, caja: PieChart,
+  productos: Package, inventario: Activity, clientes: Users,
+  compras: ShoppingCart, 'listas-precios': DollarSign, proveedores: Truck, finanzas: PieChart,
+};
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -27,22 +34,16 @@ export default function Layout() {
     navigate('/login');
   };
 
-  const navItems = [
-    { name: 'Inicio', path: '/', icon: Home, roles: ['admin'] },
-    { name: 'Ventas', path: '/ventas', icon: FileText, roles: ['admin'] },
-    { name: 'Productos', path: '/productos', icon: Package, roles: ['admin'] },
-    { name: 'Inventario', path: '/inventario', icon: Activity, roles: ['admin'] },
-    { name: 'Clientes', path: '/clientes', icon: Users, roles: ['admin'] },
-    { name: 'Compras', path: '/compras', icon: ShoppingCart, roles: ['admin'] },
-    { name: 'Listas de Precios', path: '/listas-precios', icon: DollarSign, roles: ['admin'] },
-    { name: 'Proveedores', path: '/proveedores', icon: Truck, roles: ['admin'] },
-    { name: 'Finanzas', path: '/finanzas', icon: PieChart, roles: ['admin'] },
-    { name: 'Usuarios', path: '/usuarios', icon: Users, roles: ['admin'] },
-    { name: 'Punto de Venta',   path: '/pos',            icon: ShoppingCart, roles: ['vendedor'] },
-    { name: 'Caja del Día',     path: '/caja',           icon: PieChart,     roles: ['vendedor'] },
-  ];
+  const moduleItems = MODULES
+    .filter((m) => user && canAccess(user, m.id))
+    .map((m) => ({ name: m.label, path: m.path, icon: ICONS[m.id] }));
 
-  const filteredNav = navItems.filter(item => user && item.roles.includes(user.role));
+  const navItems = [
+    ...moduleItems,
+    ...(user?.role === 'admin'
+      ? [{ name: 'Usuarios', path: '/usuarios', icon: Users }]
+      : []),
+  ];
 
   return (
     <div className="flex h-screen bg-brand-cream overflow-hidden text-brand-text">
@@ -69,10 +70,10 @@ export default function Layout() {
           </span>
         </div>
 
-        <nav className="flex-1 px-4 py-4 space-y-1">
-            {filteredNav.map((item) => {
+        <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
+            {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
+              const isActive = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path + '/'));
               return (
                 <Link
                   key={item.name}

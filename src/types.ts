@@ -6,6 +6,9 @@ export interface User {
   username: string;
   passwordHash: string;
   role: Role;
+  email?: string | null;
+  active: boolean;
+  modules: string[];
 }
 
 export interface Product {
