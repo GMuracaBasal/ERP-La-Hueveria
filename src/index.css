@@ -1,6 +1,29 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Tokens semánticos — solo área de contenido (main); el sidebar usa brand-dark fijo */
+:root {
+  --basal-bg: #F0EBE3;
+  --basal-surface: #FFFFFF;
+  --basal-text: #1A1F2E;
+  --basal-text-sec: #7A8A9A;
+  --basal-border: #D8D0C6;
+  --basal-input: #F5F1EB;
+  --basal-hover: rgba(0, 0, 0, 0.04);
+}
+
+.dark {
+  --basal-bg: #1A1F2E;
+  --basal-surface: #2C3A4E;
+  --basal-text: #FFFFFF;
+  --basal-text-sec: #7A8A9A;
+  --basal-border: rgba(255, 255, 255, 0.1);
+  --basal-input: #242B3A;
+  --basal-hover: rgba(255, 255, 255, 0.06);
+}
+
 @theme {
   /* Paleta Basal — regla 60-30-10 */
   --color-brand-dark:    #1A1F2E; /* fondo principal (sidebar, header) */
@@ -30,6 +53,85 @@
 
 body {
   font-family: var(--font-sans);
-  background-color: var(--color-brand-cream);
-  color: var(--color-brand-text);
+  background-color: var(--basal-bg);
+  color: var(--basal-text);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* ─── Overrides globales dark (mismo enfoque que Bombita) ─────────── */
+
+.dark .bg-white {
+  background-color: var(--basal-surface) !important;
+}
+
+.dark .bg-brand-cream,
+.dark .bg-brand-bg,
+.dark .bg-brand-durazno {
+  background-color: var(--basal-bg) !important;
+}
+
+.dark .bg-brand-cream\/30,
+.dark .bg-brand-cream\/20,
+.dark .bg-brand-cream\/10,
+.dark .bg-brand-cream\/40,
+.dark .bg-brand-cream\/50 {
+  background-color: var(--basal-input) !important;
+}
+
+.dark .bg-gray-50,
+.dark .bg-gray-50\/30,
+.dark .bg-gray-50\/50 {
+  background-color: var(--basal-input) !important;
+}
+
+.dark .bg-gray-100 {
+  background-color: var(--basal-input) !important;
+}
+
+.dark .border-gray-50,
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-gray-300,
+.dark .border-brand-border {
+  border-color: var(--basal-border) !important;
+}
+
+.dark .text-gray-900,
+.dark .text-gray-800,
+.dark .text-gray-700,
+.dark .text-brand-text,
+.dark .text-brand-brown {
+  color: #FFFFFF !important;
+}
+
+.dark .text-gray-600,
+.dark .text-gray-500,
+.dark .text-brand-muted {
+  color: #A0AAB4 !important;
+}
+
+.dark .hover\:bg-gray-50:hover,
+.dark .hover\:bg-gray-100:hover {
+  background-color: var(--basal-hover) !important;
+}
+
+.dark .divide-gray-50 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--basal-border);
+}
+
+.dark input,
+.dark textarea,
+.dark select {
+  color: #FFFFFF;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #7A8A9A;
+}
+
+/* Sidebar fijo — no hereda overrides de contenido */
+.dark aside .bg-brand-cream {
+  background-color: #F0EBE3 !important;
 }

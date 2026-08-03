@@ -5,13 +5,14 @@ import { cn } from '../lib/utils';
 import {
   Home, Package, DollarSign, Truck, Users,
   ShoppingCart, FileText, Activity, PieChart,
-  Menu, Egg
+  Menu, Egg, Sun, Moon
 } from 'lucide-react';
 import { db } from '../lib/db';
 import { Settings } from '../types';
 import { Button } from './ui';
 import { BasalLogo } from './BasalLogo';
 import { MODULES, canAccess } from '../lib/modules';
+import { useTheme } from '../contexts/ThemeContext';
 
 const ICONS: Record<string, any> = {
   inicio: Home, ventas: FileText, pos: ShoppingCart, caja: PieChart,
@@ -21,6 +22,7 @@ const ICONS: Record<string, any> = {
 
 export default function Layout() {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -47,7 +49,7 @@ export default function Layout() {
   ];
 
   return (
-    <div className="flex h-screen bg-brand-cream overflow-hidden text-brand-text">
+    <div className="flex h-screen bg-[var(--basal-bg)] overflow-hidden text-[var(--basal-text)]">
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div 
@@ -125,25 +127,37 @@ export default function Layout() {
 
       {/* Main content */}
       <div className="flex flex-col flex-1 w-0 overflow-hidden">
-        <header className="relative z-10 flex-shrink-0 h-16 bg-brand-dark flex items-center justify-between px-4 sm:px-8 border-b border-white/10">
+        <header className="relative z-10 flex-shrink-0 h-16 bg-[var(--basal-surface)] flex items-center justify-between px-4 sm:px-8 border-b border-[var(--basal-border)]">
           <div className="flex items-center gap-4">
             <button
-              className="lg:hidden p-2 text-white/70 hover:text-white transition-colors focus:outline-none"
+              className="lg:hidden p-2 text-[var(--basal-text-sec)] hover:text-[var(--basal-text)] transition-colors focus:outline-none"
               onClick={() => setSidebarOpen(true)}
             >
               <Menu className="h-6 w-6" />
             </button>
-            <h1 className="text-xl font-bold text-white hidden sm:block">Panel de Control</h1>
+            <h1 className="text-xl font-bold text-[var(--basal-text)] hidden sm:block">Panel de Control</h1>
           </div>
           
           <div className="flex items-center gap-4 sm:gap-6">
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-lg hover:bg-[var(--basal-hover)] transition-colors text-[var(--basal-text-sec)]"
+              aria-label="Cambiar tema"
+              title={theme === 'light' ? 'Modo oscuro' : 'Modo claro'}
+            >
+              {theme === 'light' ? (
+                <Moon className="w-5 h-5" />
+              ) : (
+                <Sun className="w-5 h-5" />
+              )}
+            </button>
             <Button onClick={() => user?.role === 'vendedor' ? navigate('/pos') : navigate('/ventas')} size="sm" className="font-bold hidden sm:flex">
                {user?.role === 'vendedor' ? 'Ir al POS' : 'Nueva Venta'}
             </Button>
           </div>
         </header>
 
-        <main className="flex-1 relative overflow-y-auto focus:outline-none p-4 sm:p-8 bg-brand-cream">
+        <main className="flex-1 relative overflow-y-auto focus:outline-none p-4 sm:p-8 bg-[var(--basal-bg)]">
           <Outlet />
         </main>
       </div>
