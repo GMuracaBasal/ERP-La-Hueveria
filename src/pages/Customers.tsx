@@ -1,12 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { accountMovementsDB, customersDB, priceListsDB } from '../lib/db';
-import { AccountMovement, Customer, PriceList } from '../types';
+import {
+  accountMovementsDB,
+  customersDB,
+  priceListsDB,
+  productsDB,
+  salesDB,
+  db,
+} from '../lib/db';
+import { AccountMovement, Customer, PriceList, Product, Sale, Settings } from '../types';
 import { Button, ActionButtons, Modal, Badge, SearchableSelect, useConfirm, useToast } from '../components/ui';
 import { formatCurrency, generateId } from '../lib/utils';
-import { balancesByParty } from '../lib/accountMovements';
+import { balancesByParty, computeBalance } from '../lib/accountMovements';
 import { isConsumidorFinal } from '../lib/consumidorFinal';
 import CuentaCorriente from '../components/CuentaCorriente';
 import RegistrarMovimientoModal from '../components/RegistrarMovimientoModal';
+import SaleTicketModal from '../components/SaleTicketModal';
 
 const emptyForm = {
   name: '',
@@ -29,6 +37,9 @@ export default function Customers() {
   const [editing, setEditing] = useState<Customer | null>(null);
   const [movModalOpen, setMovModalOpen] = useState(false);
   const [formData, setFormData] = useState(emptyForm);
+  const [ticketSale, setTicketSale] = useState<Sale | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
 
   const loadList = async () => {
     try {
@@ -55,8 +66,29 @@ export default function Customers() {
 
   useEffect(() => {
     loadList();
+    (async () => {
+      try {
+        setProducts(await productsDB.getAll());
+        setSettings(await db.getSettings());
+      } catch {
+        /* ticket opcional */
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const openSaleFromBook = async (id: string) => {
+    try {
+      const sale = await salesDB.getById(id, true);
+      if (!sale) {
+        toast.error('No se encontró la venta.');
+        return;
+      }
+      setTicketSale(sale);
+    } catch {
+      toast.error('No se pudo abrir el ticket de venta.');
+    }
+  };
 
   const openDetail = async (customer: Customer) => {
     setSelected(customer);
@@ -269,6 +301,9 @@ export default function Customers() {
           partyType="customer"
           onChanged={refreshDetail}
           onRegistrar={() => setMovModalOpen(true)}
+          onOpenDocument={({ type, id }) => {
+            if (type === 'venta') openSaleFromBook(id);
+          }}
         />
 
         <RegistrarMovimientoModal
@@ -278,6 +313,18 @@ export default function Customers() {
           partyType="customer"
           partyId={selected.id}
           partyName={selected.name}
+          currentBalance={computeBalance(movements, 'customer')}
+        />
+
+        <SaleTicketModal
+          sale={ticketSale}
+          onClose={() => setTicketSale(null)}
+          onUpdated={refreshDetail}
+          products={products}
+          customers={customers}
+          priceLists={lists}
+          settings={settings}
+          initialMode="view"
         />
 
         <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Editar Cliente">

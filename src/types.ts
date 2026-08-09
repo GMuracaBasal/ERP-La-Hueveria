@@ -63,6 +63,9 @@ export interface Purchase {
   notes: string;
   total: number;
   items: PurchaseItem[];
+  voided?: boolean;
+  voidedAt?: string | null;
+  voidedBy?: string | null;
 }
 
 export interface SaleItem {
@@ -143,6 +146,26 @@ export interface AccountMovement {
   haber: number;
   referenceType: AccountReferenceType;
   referenceId: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  voided: boolean;
+  voidedAt: string | null;
+  voidedBy: string | null;
+}
+
+/** Cobro a cliente o pago a proveedor (mueve CC + caja juntos). */
+export type PaymentType = 'cobro' | 'pago';
+
+export interface Payment {
+  id: string;
+  type: PaymentType;
+  customerId: string | null;
+  supplierId: string | null;
+  date: string;
+  amount: number;
+  /** Código: efectivo | transferencia | tarjeta | qr */
+  paymentMethod: string;
+  concept: string | null;
   createdBy: string | null;
   createdAt: string;
   voided: boolean;

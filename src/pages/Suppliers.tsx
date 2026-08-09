@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { accountMovementsDB, suppliersDB } from '../lib/db';
-import { AccountMovement, Supplier } from '../types';
+import { accountMovementsDB, suppliersDB, purchasesDB, productsDB } from '../lib/db';
+import { AccountMovement, Product, Purchase, Supplier } from '../types';
 import { Button, ActionButtons, Modal, useConfirm, useToast } from '../components/ui';
 import { formatCurrency, generateId } from '../lib/utils';
-import { balancesByParty } from '../lib/accountMovements';
+import { balancesByParty, computeBalance } from '../lib/accountMovements';
 import CuentaCorriente from '../components/CuentaCorriente';
 import RegistrarMovimientoModal from '../components/RegistrarMovimientoModal';
+import PurchaseTicketModal from '../components/PurchaseTicketModal';
 
 const emptyForm = { name: '', phone: '', email: '', address: '', notes: '' };
 
@@ -20,6 +21,8 @@ export default function Suppliers() {
   const [editing, setEditing] = useState<Supplier | null>(null);
   const [movModalOpen, setMovModalOpen] = useState(false);
   const [formData, setFormData] = useState(emptyForm);
+  const [ticketPurchase, setTicketPurchase] = useState<Purchase | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
 
   const loadList = async () => {
     try {
@@ -44,8 +47,28 @@ export default function Suppliers() {
 
   useEffect(() => {
     loadList();
+    (async () => {
+      try {
+        setProducts(await productsDB.getAll());
+      } catch {
+        /* ticket opcional */
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const openPurchaseFromBook = async (id: string) => {
+    try {
+      const purchase = await purchasesDB.getById(id, true);
+      if (!purchase) {
+        toast.error('No se encontró la compra.');
+        return;
+      }
+      setTicketPurchase(purchase);
+    } catch {
+      toast.error('No se pudo abrir el comprobante de compra.');
+    }
+  };
 
   const openDetail = async (supplier: Supplier) => {
     setSelected(supplier);
@@ -230,6 +253,9 @@ export default function Suppliers() {
           partyType="supplier"
           onChanged={refreshDetail}
           onRegistrar={() => setMovModalOpen(true)}
+          onOpenDocument={({ type, id }) => {
+            if (type === 'compra') openPurchaseFromBook(id);
+          }}
         />
 
         <RegistrarMovimientoModal
@@ -239,6 +265,16 @@ export default function Suppliers() {
           partyType="supplier"
           partyId={selected.id}
           partyName={selected.name}
+          currentBalance={computeBalance(movements, 'supplier')}
+        />
+
+        <PurchaseTicketModal
+          purchase={ticketPurchase}
+          onClose={() => setTicketPurchase(null)}
+          onUpdated={refreshDetail}
+          products={products}
+          suppliers={suppliers}
+          initialMode="view"
         />
 
         <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Editar Proveedor">

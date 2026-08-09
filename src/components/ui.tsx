@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react';
 import { cn } from '../lib/utils';
-import { Edit2, Trash2, X, CheckCircle, AlertTriangle, Info, XCircle } from 'lucide-react';
+import { Edit2, Pencil, Trash2, X, Eye, CheckCircle, AlertTriangle, Info, XCircle } from 'lucide-react';
 import Select, { Props as SelectProps } from 'react-select';
 
 // ─────────────────────────────────────────────────────────
@@ -92,7 +92,7 @@ export function AntiAutofillInput({
 }
 
 // ─────────────────────────────────────────────────────────
-// ACTION BUTTONS (sin cambios)
+// ACTION BUTTONS (entidades maestras: editar / eliminar)
 // ─────────────────────────────────────────────────────────
 export function ActionButtons({ onEdit, onDelete }: { onEdit?: () => void, onDelete?: () => void }) {
   return (
@@ -105,6 +105,85 @@ export function ActionButtons({ onEdit, onDelete }: { onEdit?: () => void, onDel
       {onDelete && (
         <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }} className="text-gray-400 hover:text-brand-danger transition-colors p-1" title="Eliminar">
           <Trash2 className="w-4 h-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// DOCUMENT ACTIONS (comprobantes: ver · editar · anular)
+// Orden fijo Basal: ojo · lápiz · X.
+// Anulado / sin permiso de modificar → solo ojo.
+// Si puede anular pero no editar → lápiz visible deshabilitado + tooltip.
+// ─────────────────────────────────────────────────────────
+export function DocumentActions({
+  onView,
+  onEdit,
+  onVoid,
+  canEdit = false,
+  canVoid = false,
+  editDisabledReason,
+}: {
+  onView: () => void;
+  onEdit?: () => void;
+  onVoid?: () => void;
+  canEdit?: boolean;
+  canVoid?: boolean;
+  /** Si hay permiso de fila pero no se puede editar (ej. CC), mostrar lápiz deshabilitado. */
+  editDisabledReason?: string;
+}) {
+  const iconBtn =
+    'p-1.5 rounded-lg text-gray-400 hover:bg-brand-durazno/60 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed';
+
+  // Mostrar lápiz si se puede editar, o deshabilitado si puede anular pero no editar
+  const showEdit = Boolean(onEdit) && (canEdit || (canVoid && !!editDisabledReason));
+  const editEnabled = canEdit && !!onEdit;
+
+  return (
+    <div className="inline-flex items-center justify-end gap-0.5">
+      <button
+        type="button"
+        title="Ver"
+        aria-label="Ver"
+        className={`${iconBtn} hover:text-brand-navy`}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onView();
+        }}
+      >
+        <Eye className="w-4 h-4" />
+      </button>
+      {showEdit && (
+        <button
+          type="button"
+          title={editEnabled ? 'Editar' : editDisabledReason || 'No se puede editar'}
+          aria-label="Editar"
+          disabled={!editEnabled}
+          className={`${iconBtn} ${editEnabled ? 'hover:text-blue-600' : ''}`}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (editEnabled) onEdit?.();
+          }}
+        >
+          <Pencil className="w-4 h-4" />
+        </button>
+      )}
+      {canVoid && onVoid && (
+        <button
+          type="button"
+          title="Anular"
+          aria-label="Anular"
+          className={`${iconBtn} hover:text-brand-danger`}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onVoid();
+          }}
+        >
+          <X className="w-4 h-4" />
         </button>
       )}
     </div>

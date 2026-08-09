@@ -1,15 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { salesDB } from '../lib/db';
-import { Sale, SaleItem, Product, Customer, PriceList, Settings } from '../types';
+import { Sale, SaleItem, Product, Customer, PriceList, Settings, SaleCondition } from '../types';
 import { Button, Modal, Badge, SearchableSelect, useToast } from '../components/ui';
 import { formatCurrency, formatFechaHora } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { isConsumidorFinal } from '../lib/consumidorFinal';
 import {
   canModifySale,
-  isContadoSale,
   isCuentaCorrienteSale,
-  isEditableSale,
   getSaleRpcErrorMessage,
 } from '../lib/salePermissions';
 
@@ -25,6 +23,8 @@ interface SaleTicketModalProps {
   settings: Settings | null;
   /** Limita medios de pago y cliente al estilo POS (Caja) */
   posStyle?: boolean;
+  /** Modo inicial al abrir (ojo=view, lápiz=edit, X=void). */
+  initialMode?: Mode;
 }
 
 const POS_PAYMENT_OPTIONS = [
@@ -57,11 +57,13 @@ export default function SaleTicketModal({
   priceLists,
   settings,
   posStyle = false,
+  initialMode = 'view',
 }: SaleTicketModalProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [mode, setMode] = useState<Mode>('view');
   const [customerId, setCustomerId] = useState('');
+  const [condition, setCondition] = useState<SaleCondition>('contado');
   const [paymentMethod, setPaymentMethod] = useState('Efectivo');
   const [items, setItems] = useState<SaleItem[]>([]);
   const [editReason, setEditReason] = useState('');
@@ -70,13 +72,22 @@ export default function SaleTicketModal({
 
   useEffect(() => {
     if (!sale) return;
-    setMode('view');
+    const baseCan = canModifySale(user, sale);
+    let next: Mode = initialMode;
+    if (initialMode === 'edit' && !baseCan) next = 'view';
+    if (initialMode === 'void' && !baseCan) next = 'view';
+    setMode(next);
     setCustomerId(sale.customerId || '');
+    setCondition(
+      posStyle || sale.pointOfSale === 'mostrador'
+        ? 'contado'
+        : sale.condition,
+    );
     setPaymentMethod(sale.paymentMethod || 'Efectivo');
     setItems(sale.items.map((i) => ({ ...i })));
     setEditReason('');
     setVoidReason('');
-  }, [sale]);
+  }, [sale, initialMode, user, posStyle]);
 
   const namedCustomers = useMemo(
     () => customers.filter((c) => !isConsumidorFinal(c)),
@@ -87,8 +98,9 @@ export default function SaleTicketModal({
 
   const isVoided = !!sale.voided;
   const baseCanModify = canModifySale(user, sale);
-  const canEdit = baseCanModify && isEditableSale(sale);
+  const canEdit = baseCanModify;
   const canVoid = baseCanModify;
+  const canChangeCondition = !posStyle && sale.pointOfSale === 'mayorista';
   const paymentOptions =
     posStyle || sale.pointOfSale === 'mostrador'
       ? POS_PAYMENT_OPTIONS
@@ -143,6 +155,13 @@ export default function SaleTicketModal({
       return;
     }
 
+    const resolvedCondition: SaleCondition =
+      canChangeCondition ? condition : 'contado';
+    if (resolvedCondition === 'contado' && !paymentMethod) {
+      toast.error('Debés indicar el medio de pago.');
+      return;
+    }
+
     for (const item of items) {
       const available = getAvailableStock(item.productId, sale, products);
       if (available < item.quantity) {
@@ -158,7 +177,8 @@ export default function SaleTicketModal({
     try {
       await salesDB.editSale(sale.id, user.id, editReason, {
         customerId: resolvedCustomerId,
-        paymentMethod,
+        condition: resolvedCondition,
+        paymentMethod: resolvedCondition === 'contado' ? paymentMethod : null,
         date: sale.date,
         items,
         customerName: editCustomerName,
@@ -269,14 +289,9 @@ export default function SaleTicketModal({
               <Button variant="danger" onClick={() => setMode('void')}>Anular</Button>
             )}
           </div>
-          {!isVoided && !baseCanModify && isContadoSale(sale) && user?.role === 'vendedor' && (
+          {!isVoided && !baseCanModify && user?.role === 'vendedor' && (
             <p className="text-xs text-brand-muted italic pt-2 no-print">
               Solo un administrador puede modificar ventas de cajas ya cerradas.
-            </p>
-          )}
-          {!isVoided && isCuentaCorrienteSale(sale) && baseCanModify && (
-            <p className="text-xs text-brand-muted italic pt-2 no-print">
-              Las ventas en Cuenta Corriente no se editan: anulá y registrá de nuevo si hace falta.
             </p>
           )}
         </div>
@@ -304,16 +319,46 @@ export default function SaleTicketModal({
               />
             </div>
           )}
-          <div>
-            <label className="block text-sm mb-1">Medio de Pago</label>
-            <SearchableSelect
-              options={paymentOptions}
-              value={{ value: paymentMethod, label: paymentMethod }}
-              onChange={(selected: { value: string } | null) =>
-                setPaymentMethod(selected?.value || paymentOptions[0].value)
-              }
-            />
-          </div>
+          {canChangeCondition && (
+            <div>
+              <label className="block text-sm mb-1">Condición</label>
+              <SearchableSelect
+                options={[
+                  { value: 'contado', label: 'Contado' },
+                  { value: 'cuenta_corriente', label: 'Cuenta Corriente' },
+                ]}
+                value={{
+                  value: condition,
+                  label: condition === 'cuenta_corriente' ? 'Cuenta Corriente' : 'Contado',
+                }}
+                onChange={(selected: { value: string } | null) => {
+                  const next = (selected?.value === 'cuenta_corriente'
+                    ? 'cuenta_corriente'
+                    : 'contado') as SaleCondition;
+                  setCondition(next);
+                  if (next === 'contado' && !paymentMethod) {
+                    setPaymentMethod(paymentOptions[0].value);
+                  }
+                }}
+              />
+            </div>
+          )}
+          {condition === 'contado' ? (
+            <div>
+              <label className="block text-sm mb-1">Medio de Pago</label>
+              <SearchableSelect
+                options={paymentOptions}
+                value={{ value: paymentMethod, label: paymentMethod }}
+                onChange={(selected: { value: string } | null) =>
+                  setPaymentMethod(selected?.value || paymentOptions[0].value)
+                }
+              />
+            </div>
+          ) : (
+            <p className="text-xs text-brand-muted italic">
+              Sin cobro: solo Debe en la cuenta del cliente. No ingresa a caja.
+            </p>
+          )}
 
           <div className="border-t pt-4 space-y-2 max-h-48 overflow-y-auto">
             {items.map((item, index) => (

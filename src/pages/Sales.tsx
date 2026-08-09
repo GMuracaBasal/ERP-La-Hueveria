@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { salesDB, customersDB, productsDB, priceListsDB, db } from '../lib/db';
 import { Sale, SaleItem, Customer, Product, PriceList, Settings, SaleCondition } from '../types';
-import { Button, Modal, Badge, SearchableSelect, useToast } from '../components/ui';
+import { Button, Modal, Badge, SearchableSelect, DocumentActions, useToast } from '../components/ui';
 import SaleTicketModal from '../components/SaleTicketModal';
 import InputFecha from '../components/InputFecha';
 import FiltroFechas, { defaultDateRange, isDateInRange } from '../components/FiltroFechas';
 import { generateId, formatCurrency, formatFechaHora, isoDateToTimestamp, todayISODate } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { isConsumidorFinal } from '../lib/consumidorFinal';
-import { getSaleRpcErrorMessage } from '../lib/salePermissions';
+import {
+  canModifySale,
+  getSaleRpcErrorMessage,
+} from '../lib/salePermissions';
 
 const MAYORISTA_PAYMENT_OPTIONS = [
   { value: 'Efectivo', label: 'Efectivo' },
@@ -28,6 +31,12 @@ export default function Sales() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [detailsModal, setDetailsModal] = useState<Sale | null>(null);
+  const [ticketMode, setTicketMode] = useState<'view' | 'edit' | 'void'>('view');
+
+  const openTicket = (sale: Sale, mode: 'view' | 'edit' | 'void' = 'view') => {
+    setTicketMode(mode);
+    setDetailsModal(sale);
+  };
 
   const [customerId, setCustomerId] = useState('');
   const [condition, setCondition] = useState<SaleCondition>('contado');
@@ -205,11 +214,13 @@ export default function Sales() {
                 <th className="px-6 py-3 text-left">Medio Pago</th>
                 <th className="px-6 py-3 text-left">Total</th>
                 <th className="px-6 py-3 text-left">Estado</th>
-                <th className="px-6 py-3 text-right">Acción</th>
+                <th className="px-6 py-3 text-right">Acciones</th>
               </tr>
             </thead>
             <tbody className="text-sm text-gray-600">
-              {filteredSales.map((s) => (
+              {filteredSales.map((s) => {
+                const canMod = canModifySale(user, s);
+                return (
                 <tr
                   key={s.id}
                   className={`border-b border-gray-50 hover:bg-gray-50 transition-colors ${s.voided ? 'opacity-60' : ''}`}
@@ -237,10 +248,17 @@ export default function Sales() {
                     {s.voided ? <Badge variant="danger">ANULADO</Badge> : <Badge variant="success">ACTIVA</Badge>}
                   </td>
                   <td className="px-6 py-3 text-right">
-                    <Button variant="ghost" size="sm" onClick={() => setDetailsModal(s)}>Ver Ticket</Button>
+                    <DocumentActions
+                      onView={() => openTicket(s, 'view')}
+                      onEdit={() => openTicket(s, 'edit')}
+                      onVoid={() => openTicket(s, 'void')}
+                      canEdit={canMod}
+                      canVoid={canMod}
+                    />
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {filteredSales.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
@@ -414,6 +432,7 @@ export default function Sales() {
         customers={customers}
         priceLists={priceLists}
         settings={settings}
+        initialMode={ticketMode}
       />
     </div>
   );

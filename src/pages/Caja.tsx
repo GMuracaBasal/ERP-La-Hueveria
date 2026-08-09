@@ -4,11 +4,14 @@ import { FinanceMovement, Sale, Product, PriceList, Settings, Customer } from '.
 import { formatCurrency, formatFecha, formatFechaHora, parseLocalDate } from '../lib/utils';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Button, Badge } from '../components/ui';
+import { Button, Badge, DocumentActions } from '../components/ui';
 import SaleTicketModal from '../components/SaleTicketModal';
 import FiltroFechas, { defaultDateRange, isDateInRange } from '../components/FiltroFechas';
+import { canModifySale } from '../lib/salePermissions';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Caja() {
+  const { user } = useAuth();
   const [allFinances, setAllFinances] = useState<FinanceMovement[]>([]);
   const [allSales, setAllSales] = useState<Sale[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -16,7 +19,13 @@ export default function Caja() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+  const [ticketMode, setTicketMode] = useState<'view' | 'edit' | 'void'>('view');
   const [dateRange, setDateRange] = useState(defaultDateRange);
+
+  const openTicket = (sale: Sale, mode: 'view' | 'edit' | 'void' = 'view') => {
+    setTicketMode(mode);
+    setSelectedSale(sale);
+  };
 
   const loadData = async () => {
     const sales = await salesDB.getAll({ includeVoided: true });
@@ -125,14 +134,18 @@ export default function Caja() {
                   <th className="px-6 py-3 text-left">Productos</th>
                   <th className="px-6 py-3 text-left">Medio de Pago</th>
                   <th className="px-6 py-3 text-right">Total</th>
-                  <th className="px-6 py-3 text-right">Acción</th>
+                  <th className="px-6 py-3 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="text-sm text-gray-600">
                 {rangeSales.map(s => {
                   const descList = s.items.map(i => `${getProductName(i.productId)} x${i.quantity}`).join(', ');
+                  const canMod = canModifySale(user, s);
                   return (
-                    <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                    <tr
+                      key={s.id}
+                      className={`border-b border-gray-50 hover:bg-gray-50 transition-colors ${s.voided ? 'opacity-60' : ''}`}
+                    >
                       <td className="px-6 py-4 font-medium text-gray-800">
                         {formatFechaHora(s.date)}
                       </td>
@@ -144,13 +157,17 @@ export default function Caja() {
                           {s.paymentMethod || '—'}
                         </Badge>
                       </td>
-                      <td className="px-6 py-4 text-right font-bold text-green-700">
+                      <td className={`px-6 py-4 text-right font-bold ${s.voided ? 'text-gray-400 line-through' : 'text-green-700'}`}>
                         {formatCurrency(s.total)}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <Button variant="ghost" size="sm" onClick={() => setSelectedSale(s)}>
-                          Ver / Editar
-                        </Button>
+                        <DocumentActions
+                          onView={() => openTicket(s, 'view')}
+                          onEdit={() => openTicket(s, 'edit')}
+                          onVoid={() => openTicket(s, 'void')}
+                          canEdit={canMod}
+                          canVoid={canMod}
+                        />
                       </td>
                     </tr>
                   );
@@ -170,6 +187,7 @@ export default function Caja() {
         priceLists={priceLists}
         settings={settings}
         posStyle
+        initialMode={ticketMode}
       />
     </div>
   );

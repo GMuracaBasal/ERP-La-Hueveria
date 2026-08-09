@@ -3,9 +3,14 @@ import { generateId } from './utils';
 import {
   User, Product, PriceList, Supplier, Customer,
   Purchase, Sale, InventoryMovement, FinanceMovement, Settings,
-  AccountMovement, PointOfSale, SaleCondition,
+  AccountMovement, PointOfSale, SaleCondition, Payment, PaymentType,
 } from '../types';
 import { roundMoney } from './accountMovements';
+import {
+  defaultPaymentConcept,
+  paymentMethodLabel,
+  type PaymentMethodCode,
+} from './paymentMethods';
 
 // ─── Helpers de mapeo (snake_case en DB ↔ camelCase en TS) ───────────
 
@@ -208,39 +213,181 @@ export const priceListsDB = {
 
 // ─── Compras (con items en tabla hija) ───────────────────────────────
 
+const mapPurchaseFromDB = (p: any): Purchase => ({
+  id: p.id,
+  date: p.date,
+  supplierId: p.supplier_id,
+  invoiceNumber: p.invoice_number ?? '',
+  notes: p.notes ?? '',
+  total: Number(p.total),
+  voided: p.voided ?? false,
+  voidedAt: p.voided_at ?? null,
+  voidedBy: p.voided_by ?? null,
+  items: (p.purchase_items ?? []).map((it: any) => ({
+    productId: it.product_id,
+    quantity: Number(it.quantity),
+    unitCost: Number(it.unit_cost),
+    subtotal: Number(it.subtotal),
+  })),
+});
+
+function purchaseConcept(purchaseId: string, supplierName?: string, invoiceNumber?: string): string {
+  const short = purchaseId.slice(0, 6).toUpperCase();
+  const inv = invoiceNumber?.trim();
+  if (inv && supplierName) return `Compra #${short} — ${supplierName} (${inv})`;
+  if (supplierName) return `Compra #${short} — ${supplierName}`;
+  if (inv) return `Compra #${short} (REF: ${inv})`;
+  return `Compra #${short}`;
+}
+
+async function insertPurchaseAuditLog(entry: {
+  purchaseId: string;
+  action: 'edit' | 'void';
+  reason: string;
+  performedBy: string;
+  snapshot?: unknown;
+}): Promise<void> {
+  const { error } = await supabase.from('purchase_audit_log').insert({
+    purchase_id: entry.purchaseId,
+    action: entry.action,
+    reason: entry.reason.trim(),
+    performed_by: entry.performedBy,
+    snapshot: entry.snapshot ?? null,
+  });
+  if (error) {
+    if (error.code === 'PGRST205' || error.message?.includes('purchase_audit_log')) return;
+    throw error;
+  }
+}
+
+async function markPurchaseVoided(purchaseId: string, userId: string): Promise<void> {
+  const payload = {
+    voided: true,
+    voided_at: new Date().toISOString(),
+    voided_by: userId,
+  };
+  let { error } = await supabase.from('purchases').update(payload).eq('id', purchaseId);
+  if (error?.message?.includes('voided_at') || error?.message?.includes('voided_by')) {
+    ({ error } = await supabase.from('purchases').update({ voided: true }).eq('id', purchaseId));
+  }
+  if (error) throw error;
+}
+
+async function applyPurchaseStockAndInventory(
+  purchase: Purchase,
+  supplierName?: string,
+): Promise<void> {
+  for (const item of purchase.items) {
+    const prod = await productsDB.getById(item.productId);
+    if (!prod) throw new Error('PRODUCT_NOT_FOUND');
+
+    await productsDB.save({
+      ...prod,
+      stock: prod.stock + item.quantity,
+      costPrice: item.unitCost,
+    });
+    await inventoryDB.save({
+      id: generateId(),
+      date: purchase.date,
+      productId: prod.id,
+      type: 'entrada',
+      quantity: item.quantity,
+      referenceId: purchase.id,
+      reason: supplierName ? `Compra a ${supplierName}` : 'Compra a proveedor',
+    });
+  }
+}
+
+async function insertPurchaseAccountHaber(params: {
+  purchaseId: string;
+  supplierId: string;
+  date: string;
+  total: number;
+  concept: string;
+  createdBy: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('account_movements').insert({
+    id: generateId(),
+    date: params.date,
+    customer_id: null,
+    supplier_id: params.supplierId,
+    concept: params.concept,
+    debe: 0,
+    haber: roundMoney(params.total),
+    reference_type: 'compra',
+    reference_id: params.purchaseId,
+    created_by: params.createdBy,
+    created_at: now,
+    voided: false,
+  });
+  if (error) throw error;
+}
+
+/** Compra Contado: Haber (deuda) + Debe (pago) = saldo neto 0 en proveedor. */
+async function insertPurchaseAccountDebePago(params: {
+  purchaseId: string;
+  supplierId: string;
+  date: string;
+  total: number;
+  createdBy: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('account_movements').insert({
+    id: generateId(),
+    date: params.date,
+    customer_id: null,
+    supplier_id: params.supplierId,
+    concept: `Pago compra #${params.purchaseId.slice(0, 6).toUpperCase()}`,
+    debe: roundMoney(params.total),
+    haber: 0,
+    reference_type: 'pago',
+    reference_id: params.purchaseId,
+    created_by: params.createdBy,
+    created_at: now,
+    voided: false,
+  });
+  if (error) throw error;
+}
+
 export const purchasesDB = {
-  async getAll(): Promise<Purchase[]> {
-    const { data, error } = await supabase
-      .from('purchases')
-      .select('*, purchase_items(*)')
-      .eq('voided', false);
+  async getAll(options?: { includeVoided?: boolean }): Promise<Purchase[]> {
+    let query = supabase.from('purchases').select('*, purchase_items(*)');
+    if (!options?.includeVoided) {
+      query = query.eq('voided', false);
+    }
+    const { data, error } = await query;
     if (error) throw error;
-    return (data ?? []).map((p) => ({
-      id: p.id, date: p.date, supplierId: p.supplier_id,
-      invoiceNumber: p.invoice_number, notes: p.notes, total: Number(p.total),
-      items: (p.purchase_items ?? []).map((it: any) => ({
-        productId: it.product_id, quantity: Number(it.quantity),
-        unitCost: Number(it.unit_cost), subtotal: Number(it.subtotal),
-      })),
-    }));
+    return (data ?? []).map(mapPurchaseFromDB);
   },
 
-  async getById(id: string): Promise<Purchase | undefined> {
-    const all = await this.getAll();
-    return all.find((p) => p.id === id);
+  async getById(id: string, includeVoided = false): Promise<Purchase | undefined> {
+    let query = supabase.from('purchases').select('*, purchase_items(*)').eq('id', id);
+    if (!includeVoided) query = query.eq('voided', false);
+    const { data, error } = await query.maybeSingle();
+    if (error) throw error;
+    return data ? mapPurchaseFromDB(data) : undefined;
   },
 
   async save(purchase: Purchase): Promise<void> {
     const { error } = await supabase.from('purchases').upsert({
-      id: purchase.id, date: purchase.date, supplier_id: purchase.supplierId,
-      invoice_number: purchase.invoiceNumber, notes: purchase.notes, total: purchase.total,
+      id: purchase.id,
+      date: purchase.date,
+      supplier_id: purchase.supplierId,
+      invoice_number: purchase.invoiceNumber,
+      notes: purchase.notes,
+      total: purchase.total,
+      voided: purchase.voided ?? false,
     });
     if (error) throw error;
 
     await supabase.from('purchase_items').delete().eq('purchase_id', purchase.id);
     const rows = purchase.items.map((it) => ({
-      purchase_id: purchase.id, product_id: it.productId,
-      quantity: it.quantity, unit_cost: it.unitCost, subtotal: it.subtotal,
+      purchase_id: purchase.id,
+      product_id: it.productId,
+      quantity: it.quantity,
+      unit_cost: it.unitCost,
+      subtotal: it.subtotal,
     }));
     if (rows.length > 0) {
       const { error: e2 } = await supabase.from('purchase_items').insert(rows);
@@ -248,9 +395,182 @@ export const purchasesDB = {
     }
   },
 
+  /**
+   * Compra Contado: stock + Haber (libro) + Debe/pago (libro) + egreso en caja.
+   */
+  async createPurchase(params: {
+    purchase: Purchase;
+    userId: string;
+    supplierName?: string;
+  }): Promise<void> {
+    const { purchase, userId, supplierName } = params;
+    if (!purchase.supplierId) throw new Error('SUPPLIER_REQUIRED');
+    if (!purchase.items.length || purchase.items.some((i) => !i.productId || i.quantity <= 0)) {
+      throw new Error('INVALID_ITEMS');
+    }
+
+    const total = roundMoney(purchase.items.reduce((acc, i) => acc + i.subtotal, 0));
+    const normalized: Purchase = { ...purchase, total, voided: false };
+    const concept = purchaseConcept(
+      normalized.id,
+      supplierName,
+      normalized.invoiceNumber,
+    );
+
+    await this.save(normalized);
+    await applyPurchaseStockAndInventory(normalized, supplierName);
+
+    await insertPurchaseAccountHaber({
+      purchaseId: normalized.id,
+      supplierId: normalized.supplierId,
+      date: normalized.date,
+      total: normalized.total,
+      concept,
+      createdBy: userId,
+    });
+    await insertPurchaseAccountDebePago({
+      purchaseId: normalized.id,
+      supplierId: normalized.supplierId,
+      date: normalized.date,
+      total: normalized.total,
+      createdBy: userId,
+    });
+
+    await financeDB.save({
+      id: generateId(),
+      date: normalized.date,
+      type: 'egreso',
+      concept,
+      amount: normalized.total,
+      referenceId: normalized.id,
+    });
+  },
+
+  /** @deprecated Usar voidPurchase */
   async delete(id: string): Promise<void> {
     const { error } = await supabase.from('purchases').update({ voided: true }).eq('id', id);
     if (error) throw error;
+  },
+
+  async voidPurchase(purchaseId: string, userId: string, reason: string): Promise<void> {
+    if (!reason.trim()) throw new Error('REASON_REQUIRED');
+
+    const purchase = await this.getById(purchaseId, true);
+    if (!purchase) throw new Error('PURCHASE_NOT_FOUND');
+    if (purchase.voided) throw new Error('PURCHASE_ALREADY_VOIDED');
+
+    const snapshot = { purchase, items: purchase.items };
+
+    await voidInventoryMovementsForSale(purchaseId);
+    await voidFinanceMovementsForSale(purchaseId);
+    await voidAccountMovementsForSale(purchaseId, userId);
+    await markPurchaseVoided(purchaseId, userId);
+    await insertPurchaseAuditLog({
+      purchaseId,
+      action: 'void',
+      reason,
+      performedBy: userId,
+      snapshot,
+    });
+  },
+
+  async editPurchase(
+    purchaseId: string,
+    userId: string,
+    reason: string,
+    data: Pick<Purchase, 'supplierId' | 'invoiceNumber' | 'notes' | 'date' | 'items'> & {
+      supplierName?: string;
+    },
+  ): Promise<void> {
+    if (!reason.trim()) throw new Error('REASON_REQUIRED');
+    if (!data.supplierId) throw new Error('SUPPLIER_REQUIRED');
+    if (!data.items.length || data.items.some((i) => !i.productId || i.quantity <= 0)) {
+      throw new Error('INVALID_ITEMS');
+    }
+
+    const existing = await this.getById(purchaseId);
+    if (!existing) throw new Error('PURCHASE_NOT_FOUND');
+    if (existing.voided) throw new Error('PURCHASE_ALREADY_VOIDED');
+
+    const snapshot = { purchase: existing, items: existing.items };
+
+    const preservedConcept = await voidFinanceMovementsForSale(purchaseId);
+    await voidInventoryMovementsForSale(purchaseId);
+    await voidAccountMovementsForSale(purchaseId, userId);
+
+    // Tras revertir entradas, validar que no quede stock negativo al re-aplicar
+    // (las entradas vuelven a sumar; no hace falta stock previo).
+    const total = roundMoney(data.items.reduce((acc, i) => acc + i.subtotal, 0));
+    const updated: Purchase = {
+      ...existing,
+      supplierId: data.supplierId,
+      invoiceNumber: data.invoiceNumber,
+      notes: data.notes,
+      date: data.date,
+      items: data.items,
+      total,
+    };
+
+    const { error: headerErr } = await supabase.from('purchases').update({
+      supplier_id: updated.supplierId,
+      invoice_number: updated.invoiceNumber,
+      notes: updated.notes,
+      total: updated.total,
+      date: updated.date,
+    }).eq('id', purchaseId);
+    if (headerErr) throw headerErr;
+
+    await supabase.from('purchase_items').delete().eq('purchase_id', purchaseId);
+    const itemRows = data.items.map((it) => ({
+      purchase_id: purchaseId,
+      product_id: it.productId,
+      quantity: it.quantity,
+      unit_cost: it.unitCost,
+      subtotal: it.subtotal,
+    }));
+    if (itemRows.length > 0) {
+      const { error: itemsErr } = await supabase.from('purchase_items').insert(itemRows);
+      if (itemsErr) throw itemsErr;
+    }
+
+    await applyPurchaseStockAndInventory(updated, data.supplierName);
+
+    const concept =
+      preservedConcept ??
+      purchaseConcept(purchaseId, data.supplierName, updated.invoiceNumber);
+
+    await insertPurchaseAccountHaber({
+      purchaseId,
+      supplierId: updated.supplierId,
+      date: updated.date,
+      total: updated.total,
+      concept,
+      createdBy: userId,
+    });
+    await insertPurchaseAccountDebePago({
+      purchaseId,
+      supplierId: updated.supplierId,
+      date: updated.date,
+      total: updated.total,
+      createdBy: userId,
+    });
+
+    await financeDB.save({
+      id: generateId(),
+      date: updated.date,
+      type: 'egreso',
+      concept,
+      amount: updated.total,
+      referenceId: purchaseId,
+    });
+
+    await insertPurchaseAuditLog({
+      purchaseId,
+      action: 'edit',
+      reason,
+      performedBy: userId,
+      snapshot,
+    });
   },
 };
 
@@ -619,7 +939,7 @@ export const salesDB = {
     saleId: string,
     userId: string,
     reason: string,
-    sale: Pick<Sale, 'customerId' | 'paymentMethod' | 'date' | 'items'> & {
+    sale: Pick<Sale, 'customerId' | 'paymentMethod' | 'date' | 'items' | 'condition'> & {
       customerName?: string;
     },
   ): Promise<void> {
@@ -628,12 +948,17 @@ export const salesDB = {
       throw new Error('INVALID_ITEMS');
     }
     if (!sale.customerId) throw new Error('CUSTOMER_REQUIRED');
-    if (!sale.paymentMethod) throw new Error('PAYMENT_REQUIRED');
+
+    const nextCondition: SaleCondition = sale.condition === 'cuenta_corriente'
+      ? 'cuenta_corriente'
+      : 'contado';
+    if (nextCondition === 'contado' && !sale.paymentMethod) {
+      throw new Error('PAYMENT_REQUIRED');
+    }
 
     const existing = await this.getById(saleId);
     if (!existing) throw new Error('SALE_NOT_FOUND');
     if (existing.voided) throw new Error('SALE_ALREADY_VOIDED');
-    if (existing.condition !== 'contado') throw new Error('NOT_CONTADO_SALE');
 
     const snapshot = { sale: existing, items: existing.items };
 
@@ -650,11 +975,11 @@ export const salesDB = {
     const updated: Sale = {
       ...existing,
       customerId: sale.customerId,
-      paymentMethod: sale.paymentMethod,
+      paymentMethod: nextCondition === 'cuenta_corriente' ? null : sale.paymentMethod,
       date: sale.date,
       items: sale.items,
       total,
-      condition: 'contado',
+      condition: nextCondition,
     };
 
     const { error: headerErr } = await supabase.from('sales').update({
@@ -662,7 +987,7 @@ export const salesDB = {
       payment_method: updated.paymentMethod,
       total: updated.total,
       date: updated.date,
-      condition: 'contado',
+      condition: updated.condition,
       point_of_sale: existing.pointOfSale,
     }).eq('id', saleId);
     if (headerErr) throw headerErr;
@@ -684,6 +1009,7 @@ export const salesDB = {
 
     const concept = preservedConcept ?? saleConcept(updated, sale.customerName);
 
+    // Siempre Debe (la venta). Contado agrega Haber + ingreso en caja.
     await insertSaleAccountDebe({
       saleId,
       customerId: updated.customerId!,
@@ -692,23 +1018,25 @@ export const salesDB = {
       concept,
       createdBy: userId,
     });
-    await insertSaleAccountHaber({
-      saleId,
-      customerId: updated.customerId!,
-      date: updated.date,
-      total: updated.total,
-      createdBy: userId,
-    });
 
-    await financeDB.save({
-      id: generateId(),
-      date: updated.date,
-      type: 'ingreso',
-      concept,
-      amount: updated.total,
-      paymentMethod: updated.paymentMethod ?? undefined,
-      referenceId: saleId,
-    });
+    if (updated.condition === 'contado') {
+      await insertSaleAccountHaber({
+        saleId,
+        customerId: updated.customerId!,
+        date: updated.date,
+        total: updated.total,
+        createdBy: userId,
+      });
+      await financeDB.save({
+        id: generateId(),
+        date: updated.date,
+        type: 'ingreso',
+        concept,
+        amount: updated.total,
+        paymentMethod: updated.paymentMethod ?? undefined,
+        referenceId: saleId,
+      });
+    }
 
     await insertSaleAuditLog({
       saleId,
@@ -773,6 +1101,214 @@ export const accountMovementsDB = {
       .eq('id', id)
       .eq('voided', false);
     if (error) throw error;
+  },
+};
+
+// ─── Cobros / Pagos (CC + caja atómicos) ─────────────────────────────
+
+const mapPaymentFromDB = (r: any): Payment => ({
+  id: r.id,
+  type: r.type,
+  customerId: r.customer_id ?? null,
+  supplierId: r.supplier_id ?? null,
+  date: r.date,
+  amount: Number(r.amount),
+  paymentMethod: r.payment_method,
+  concept: r.concept ?? null,
+  createdBy: r.created_by ?? null,
+  createdAt: r.created_at,
+  voided: r.voided ?? false,
+  voidedAt: r.voided_at ?? null,
+  voidedBy: r.voided_by ?? null,
+});
+
+function isMissingRpcError(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return (
+    error.code === 'PGRST202' ||
+    !!error.message?.includes('Could not find the function') ||
+    !!error.message?.includes('register_payment') ||
+    !!error.message?.includes('void_payment')
+  );
+}
+
+/** Compensación si falla a mitad en el fallback sin RPC. */
+async function rollbackPaymentCreate(paymentId: string): Promise<void> {
+  await supabase.from('finance_movements').delete().eq('reference_id', paymentId);
+  await supabase
+    .from('account_movements')
+    .delete()
+    .eq('reference_id', paymentId)
+    .in('reference_type', ['cobro', 'pago']);
+  await supabase.from('payments').delete().eq('id', paymentId);
+}
+
+async function createPaymentClientSide(params: {
+  type: PaymentType;
+  customerId: string | null;
+  supplierId: string | null;
+  date: string;
+  amount: number;
+  paymentMethod: PaymentMethodCode;
+  concept: string | null;
+  createdBy: string;
+}): Promise<string> {
+  const amount = roundMoney(params.amount);
+  if (!(amount > 0)) throw new Error('INVALID_AMOUNT');
+
+  const paymentId = generateId();
+  const methodLabel = paymentMethodLabel(params.paymentMethod);
+  const concept =
+    (params.concept && params.concept.trim()) ||
+    defaultPaymentConcept(params.type, params.paymentMethod);
+  const now = new Date().toISOString();
+
+  try {
+    const { error: pErr } = await supabase.from('payments').insert({
+      id: paymentId,
+      type: params.type,
+      customer_id: params.customerId,
+      supplier_id: params.supplierId,
+      date: params.date,
+      amount,
+      payment_method: params.paymentMethod,
+      concept: params.concept?.trim() || null,
+      created_by: params.createdBy,
+      created_at: now,
+      voided: false,
+    });
+    if (pErr) throw pErr;
+
+    const { error: aErr } = await supabase.from('account_movements').insert({
+      id: generateId(),
+      date: params.date,
+      customer_id: params.type === 'cobro' ? params.customerId : null,
+      supplier_id: params.type === 'pago' ? params.supplierId : null,
+      concept,
+      debe: params.type === 'pago' ? amount : 0,
+      haber: params.type === 'cobro' ? amount : 0,
+      reference_type: params.type,
+      reference_id: paymentId,
+      created_by: params.createdBy,
+      created_at: now,
+      voided: false,
+    });
+    if (aErr) throw aErr;
+
+    const { error: fErr } = await supabase.from('finance_movements').insert({
+      id: generateId(),
+      date: params.date,
+      type: params.type === 'cobro' ? 'ingreso' : 'egreso',
+      concept,
+      payment_method: methodLabel,
+      amount,
+      reference_id: paymentId,
+      voided: false,
+    });
+    if (fErr) throw fErr;
+
+    return paymentId;
+  } catch (err) {
+    await rollbackPaymentCreate(paymentId);
+    throw err;
+  }
+}
+
+export const paymentsDB = {
+  async getById(id: string): Promise<Payment | undefined> {
+    const { data, error } = await supabase.from('payments').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data ? mapPaymentFromDB(data) : undefined;
+  },
+
+  /**
+   * Registra cobro o pago: payment + account_movement + finance_movement.
+   * Prefiere RPC atómica; si falta la migración de funciones, usa cliente con rollback.
+   */
+  async register(params: {
+    type: PaymentType;
+    customerId?: string | null;
+    supplierId?: string | null;
+    date: string;
+    amount: number;
+    paymentMethod: PaymentMethodCode;
+    concept?: string | null;
+    createdBy: string;
+  }): Promise<string> {
+    const amount = roundMoney(params.amount);
+    if (!(amount > 0)) throw new Error('INVALID_AMOUNT');
+    if (!['efectivo', 'transferencia', 'tarjeta', 'qr'].includes(params.paymentMethod)) {
+      throw new Error('INVALID_PAYMENT_METHOD');
+    }
+    if (params.type === 'cobro' && !params.customerId) throw new Error('CUSTOMER_REQUIRED');
+    if (params.type === 'pago' && !params.supplierId) throw new Error('SUPPLIER_REQUIRED');
+
+    const { data, error } = await supabase.rpc('register_payment', {
+      p_type: params.type,
+      p_customer_id: params.type === 'cobro' ? params.customerId : null,
+      p_supplier_id: params.type === 'pago' ? params.supplierId : null,
+      p_date: params.date,
+      p_amount: amount,
+      p_payment_method: params.paymentMethod,
+      p_concept: params.concept?.trim() || null,
+      p_created_by: params.createdBy,
+    });
+
+    if (!error) return data as string;
+    if (!isMissingRpcError(error)) throw error;
+
+    return createPaymentClientSide({
+      type: params.type,
+      customerId: params.type === 'cobro' ? params.customerId ?? null : null,
+      supplierId: params.type === 'pago' ? params.supplierId ?? null : null,
+      date: params.date,
+      amount,
+      paymentMethod: params.paymentMethod,
+      concept: params.concept?.trim() || null,
+      createdBy: params.createdBy,
+    });
+  },
+
+  /** Anula payment + CC + finanzas. Motivo obligatorio. */
+  async void(paymentId: string, userId: string, reason: string): Promise<void> {
+    if (!reason.trim()) throw new Error('REASON_REQUIRED');
+
+    const { error } = await supabase.rpc('void_payment', {
+      p_payment_id: paymentId,
+      p_user_id: userId,
+      p_reason: reason.trim(),
+    });
+
+    if (!error) return;
+    if (!isMissingRpcError(error)) throw error;
+
+    // Fallback no-RPC: anular las tres patas; si falla a mitad, lanzar
+    const payment = await this.getById(paymentId);
+    if (!payment) throw new Error('PAYMENT_NOT_FOUND');
+    if (payment.voided) throw new Error('PAYMENT_ALREADY_VOIDED');
+
+    const now = new Date().toISOString();
+    const { error: pErr } = await supabase
+      .from('payments')
+      .update({ voided: true, voided_at: now, voided_by: userId })
+      .eq('id', paymentId)
+      .eq('voided', false);
+    if (pErr) throw pErr;
+
+    const { error: aErr } = await supabase
+      .from('account_movements')
+      .update({ voided: true, voided_at: now, voided_by: userId })
+      .eq('reference_id', paymentId)
+      .in('reference_type', ['cobro', 'pago'])
+      .eq('voided', false);
+    if (aErr) throw aErr;
+
+    const { error: fErr } = await supabase
+      .from('finance_movements')
+      .update({ voided: true })
+      .eq('reference_id', paymentId)
+      .eq('voided', false);
+    if (fErr) throw fErr;
   },
 };
 

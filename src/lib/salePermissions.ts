@@ -15,11 +15,11 @@ export function isCuentaCorrienteSale(sale: Sale): boolean {
 }
 
 /**
- * Ventas editables/anulables vía ticket en esta etapa:
- * Contado (mostrador o mayorista). CC se puede anular pero no editar.
+ * ¿Se puede editar el ticket? Contado y Cuenta Corriente.
+ * La autorización real (rol/fecha/anulada) la da canModifySale.
  */
 export function isEditableSale(sale: Sale): boolean {
-  return isContadoSale(sale);
+  return !sale.voided;
 }
 
 /** @deprecated Usar isContadoSale / isEditableSale */
@@ -47,9 +47,6 @@ export function getSaleRpcErrorMessage(err: unknown): string {
   if (msg.includes('PERMISSION_DENIED')) return PERMISSION_DENIED_MSG;
   if (msg.includes('SALE_ALREADY_VOIDED')) return 'Esta venta ya fue anulada.';
   if (msg.includes('REASON_REQUIRED')) return 'Debés indicar un motivo.';
-  if (msg.includes('NOT_CONTADO_SALE') || msg.includes('NOT_MOSTRADOR_SALE')) {
-    return 'Las ventas en Cuenta Corriente no pueden editarse. Podés anularlas.';
-  }
   if (msg.includes('CUSTOMER_REQUIRED')) {
     return 'Debés seleccionar un cliente.';
   }
