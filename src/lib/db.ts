@@ -3,8 +3,9 @@ import { generateId } from './utils';
 import {
   User, Product, PriceList, Supplier, Customer,
   Purchase, Sale, InventoryMovement, FinanceMovement, Settings,
-  AccountMovement,
+  AccountMovement, PointOfSale, SaleCondition,
 } from '../types';
+import { roundMoney } from './accountMovements';
 
 // ─── Helpers de mapeo (snake_case en DB ↔ camelCase en TS) ───────────
 
@@ -255,22 +256,146 @@ export const purchasesDB = {
 
 // ─── Ventas (con items en tabla hija) ────────────────────────────────
 
-const mapSaleFromDB = (s: any): Sale => ({
-  id: s.id,
-  date: s.date,
-  customerId: s.customer_id,
-  paymentMethod: s.payment_method,
-  total: Number(s.total),
-  voided: s.voided ?? false,
-  voidedAt: s.voided_at ?? null,
-  voidedBy: s.voided_by ?? null,
-  items: (s.sale_items ?? []).map((it: any) => ({
-    productId: it.product_id,
-    quantity: Number(it.quantity),
-    unitPrice: Number(it.unit_price),
-    subtotal: Number(it.subtotal),
-  })),
-});
+function inferPointOfSale(s: any): PointOfSale {
+  if (s.point_of_sale === 'mostrador' || s.point_of_sale === 'mayorista') {
+    return s.point_of_sale;
+  }
+  return s.customer_id ? 'mayorista' : 'mostrador';
+}
+
+function inferCondition(s: any): SaleCondition {
+  if (s.condition === 'contado' || s.condition === 'cuenta_corriente') {
+    return s.condition;
+  }
+  return s.payment_method === 'Cuenta Corriente' ? 'cuenta_corriente' : 'contado';
+}
+
+const mapSaleFromDB = (s: any): Sale => {
+  const condition = inferCondition(s);
+  const rawPayment = s.payment_method;
+  const paymentMethod =
+    condition === 'cuenta_corriente' || rawPayment === 'Cuenta Corriente'
+      ? null
+      : rawPayment ?? null;
+
+  return {
+    id: s.id,
+    date: s.date,
+    customerId: s.customer_id ?? null,
+    pointOfSale: inferPointOfSale(s),
+    condition,
+    paymentMethod,
+    total: Number(s.total),
+    voided: s.voided ?? false,
+    voidedAt: s.voided_at ?? null,
+    voidedBy: s.voided_by ?? null,
+    items: (s.sale_items ?? []).map((it: any) => ({
+      productId: it.product_id,
+      quantity: Number(it.quantity),
+      unitPrice: Number(it.unit_price),
+      subtotal: Number(it.subtotal),
+    })),
+  };
+};
+
+function saleConcept(sale: Pick<Sale, 'id' | 'pointOfSale'>, customerName?: string): string {
+  const short = sale.id.slice(0, 6).toUpperCase();
+  if (sale.pointOfSale === 'mostrador') {
+    return `Venta POS #${short}`;
+  }
+  return customerName
+    ? `Venta #${short} — ${customerName}`
+    : `Venta #${short}`;
+}
+
+function cobroConcept(saleId: string): string {
+  return `Cobro venta #${saleId.slice(0, 6).toUpperCase()}`;
+}
+
+async function voidAccountMovementsForSale(saleId: string, voidedBy: string): Promise<void> {
+  const { error } = await supabase
+    .from('account_movements')
+    .update({
+      voided: true,
+      voided_at: new Date().toISOString(),
+      voided_by: voidedBy,
+    })
+    .eq('reference_id', saleId)
+    .eq('voided', false);
+  if (error) throw error;
+}
+
+async function insertSaleAccountDebe(params: {
+  saleId: string;
+  customerId: string;
+  date: string;
+  total: number;
+  concept: string;
+  createdBy: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('account_movements').insert({
+    id: generateId(),
+    date: params.date,
+    customer_id: params.customerId,
+    supplier_id: null,
+    concept: params.concept,
+    debe: roundMoney(params.total),
+    haber: 0,
+    reference_type: 'venta',
+    reference_id: params.saleId,
+    created_by: params.createdBy,
+    created_at: now,
+    voided: false,
+  });
+  if (error) throw error;
+}
+
+async function insertSaleAccountHaber(params: {
+  saleId: string;
+  customerId: string;
+  date: string;
+  total: number;
+  createdBy: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('account_movements').insert({
+    id: generateId(),
+    date: params.date,
+    customer_id: params.customerId,
+    supplier_id: null,
+    concept: cobroConcept(params.saleId),
+    debe: 0,
+    haber: roundMoney(params.total),
+    reference_type: 'cobro',
+    reference_id: params.saleId,
+    created_by: params.createdBy,
+    created_at: now,
+    voided: false,
+  });
+  if (error) throw error;
+}
+
+async function applySaleStockAndInventory(sale: Sale, customerName?: string): Promise<void> {
+  for (const item of sale.items) {
+    const prod = await productsDB.getById(item.productId);
+    if (!prod) throw new Error('PRODUCT_NOT_FOUND');
+    if (prod.stock < item.quantity) throw new Error('INSUFFICIENT_STOCK');
+
+    await productsDB.save({ ...prod, stock: prod.stock - item.quantity });
+    await inventoryDB.save({
+      id: generateId(),
+      date: sale.date,
+      productId: prod.id,
+      type: 'salida',
+      quantity: item.quantity,
+      referenceId: sale.id,
+      reason: sale.pointOfSale === 'mostrador'
+        ? 'Venta POS - Consumidor Final'
+        : `Venta a ${customerName || 'cliente'}`,
+    });
+  }
+}
 
 async function voidInventoryMovementsForSale(saleId: string): Promise<void> {
   const { data, error } = await supabase
@@ -374,8 +499,13 @@ export const salesDB = {
 
   async save(sale: Sale): Promise<void> {
     const { error } = await supabase.from('sales').upsert({
-      id: sale.id, date: sale.date, customer_id: sale.customerId,
-      payment_method: sale.paymentMethod, total: sale.total,
+      id: sale.id,
+      date: sale.date,
+      customer_id: sale.customerId,
+      point_of_sale: sale.pointOfSale,
+      condition: sale.condition,
+      payment_method: sale.condition === 'cuenta_corriente' ? null : sale.paymentMethod,
+      total: sale.total,
       voided: sale.voided ?? false,
     });
     if (error) throw error;
@@ -391,6 +521,72 @@ export const salesDB = {
     }
   },
 
+  /**
+   * Crea una venta completa (cabecera + ítems + stock + CC + caja si Contado).
+   * Orden fijo; fallar a mitad puede dejar parcial — aplicar migración y revisar
+   * si se necesita RPC atómica en un paso posterior.
+   */
+  async createSale(params: {
+    sale: Sale;
+    userId: string;
+    customerName?: string;
+  }): Promise<void> {
+    const { sale, userId, customerName } = params;
+
+    if (!sale.customerId) throw new Error('CUSTOMER_REQUIRED');
+    if (!sale.items.length || sale.items.some((i) => !i.productId || i.quantity <= 0)) {
+      throw new Error('INVALID_ITEMS');
+    }
+    if (sale.condition === 'contado' && !sale.paymentMethod) {
+      throw new Error('PAYMENT_REQUIRED');
+    }
+
+    const total = roundMoney(sale.items.reduce((acc, i) => acc + i.subtotal, 0));
+    const normalized: Sale = {
+      ...sale,
+      total,
+      paymentMethod: sale.condition === 'cuenta_corriente' ? null : sale.paymentMethod,
+      voided: false,
+    };
+
+    for (const item of normalized.items) {
+      const prod = await productsDB.getById(item.productId);
+      if (!prod || prod.stock < item.quantity) throw new Error('INSUFFICIENT_STOCK');
+    }
+
+    await this.save(normalized);
+    await applySaleStockAndInventory(normalized, customerName);
+
+    const concept = saleConcept(normalized, customerName);
+    await insertSaleAccountDebe({
+      saleId: normalized.id,
+      customerId: normalized.customerId!,
+      date: normalized.date,
+      total: normalized.total,
+      concept,
+      createdBy: userId,
+    });
+
+    if (normalized.condition === 'contado') {
+      await insertSaleAccountHaber({
+        saleId: normalized.id,
+        customerId: normalized.customerId!,
+        date: normalized.date,
+        total: normalized.total,
+        createdBy: userId,
+      });
+      await financeDB.save({
+        id: generateId(),
+        date: normalized.date,
+        type: 'ingreso',
+        concept,
+        amount: normalized.total,
+        paymentMethod: normalized.paymentMethod ?? undefined,
+        referenceId: normalized.id,
+      });
+    }
+  },
+
   /** @deprecated Usar voidSale() — anula solo la fila sin revertir stock/finanzas */
   async delete(id: string): Promise<void> {
     const { error } = await supabase.from('sales').update({ voided: true }).eq('id', id);
@@ -403,12 +599,12 @@ export const salesDB = {
     const sale = await this.getById(saleId, true);
     if (!sale) throw new Error('SALE_NOT_FOUND');
     if (sale.voided) throw new Error('SALE_ALREADY_VOIDED');
-    if (sale.paymentMethod === 'Cuenta Corriente') throw new Error('NOT_MOSTRADOR_SALE');
 
     const snapshot = { sale, items: sale.items };
 
     await voidInventoryMovementsForSale(saleId);
     await voidFinanceMovementsForSale(saleId);
+    await voidAccountMovementsForSale(saleId, userId);
     await markSaleVoided(saleId, userId);
     await insertSaleAuditLog({
       saleId,
@@ -423,36 +619,51 @@ export const salesDB = {
     saleId: string,
     userId: string,
     reason: string,
-    sale: Pick<Sale, 'customerId' | 'paymentMethod' | 'date' | 'items'>,
+    sale: Pick<Sale, 'customerId' | 'paymentMethod' | 'date' | 'items'> & {
+      customerName?: string;
+    },
   ): Promise<void> {
     if (!reason.trim()) throw new Error('REASON_REQUIRED');
     if (!sale.items.length || sale.items.some((i) => !i.productId || i.quantity <= 0)) {
       throw new Error('INVALID_ITEMS');
     }
-    if (sale.paymentMethod === 'Cuenta Corriente') throw new Error('NOT_MOSTRADOR_SALE');
+    if (!sale.customerId) throw new Error('CUSTOMER_REQUIRED');
+    if (!sale.paymentMethod) throw new Error('PAYMENT_REQUIRED');
 
     const existing = await this.getById(saleId);
     if (!existing) throw new Error('SALE_NOT_FOUND');
     if (existing.voided) throw new Error('SALE_ALREADY_VOIDED');
-    if (existing.paymentMethod === 'Cuenta Corriente') throw new Error('NOT_MOSTRADOR_SALE');
+    if (existing.condition !== 'contado') throw new Error('NOT_CONTADO_SALE');
 
     const snapshot = { sale: existing, items: existing.items };
 
     const preservedConcept = await voidFinanceMovementsForSale(saleId);
     await voidInventoryMovementsForSale(saleId);
+    await voidAccountMovementsForSale(saleId, userId);
 
     for (const item of sale.items) {
       const prod = await productsDB.getById(item.productId);
       if (!prod || prod.stock < item.quantity) throw new Error('INSUFFICIENT_STOCK');
     }
 
-    const total = sale.items.reduce((acc, i) => acc + i.subtotal, 0);
+    const total = roundMoney(sale.items.reduce((acc, i) => acc + i.subtotal, 0));
+    const updated: Sale = {
+      ...existing,
+      customerId: sale.customerId,
+      paymentMethod: sale.paymentMethod,
+      date: sale.date,
+      items: sale.items,
+      total,
+      condition: 'contado',
+    };
 
     const { error: headerErr } = await supabase.from('sales').update({
-      customer_id: sale.customerId,
-      payment_method: sale.paymentMethod,
-      total,
-      date: sale.date,
+      customer_id: updated.customerId,
+      payment_method: updated.paymentMethod,
+      total: updated.total,
+      date: updated.date,
+      condition: 'contado',
+      point_of_sale: existing.pointOfSale,
     }).eq('id', saleId);
     if (headerErr) throw headerErr;
 
@@ -469,39 +680,35 @@ export const salesDB = {
       if (itemsErr) throw itemsErr;
     }
 
-    const concept = preservedConcept ?? (
-      sale.customerId === null
-        ? `Venta POS #${saleId.slice(0, 6).toUpperCase()}`
-        : `Venta #${saleId.slice(0, 6).toUpperCase()}`
-    );
+    await applySaleStockAndInventory(updated, sale.customerName);
+
+    const concept = preservedConcept ?? saleConcept(updated, sale.customerName);
+
+    await insertSaleAccountDebe({
+      saleId,
+      customerId: updated.customerId!,
+      date: updated.date,
+      total: updated.total,
+      concept,
+      createdBy: userId,
+    });
+    await insertSaleAccountHaber({
+      saleId,
+      customerId: updated.customerId!,
+      date: updated.date,
+      total: updated.total,
+      createdBy: userId,
+    });
 
     await financeDB.save({
       id: generateId(),
-      date: sale.date,
+      date: updated.date,
       type: 'ingreso',
       concept,
-      amount: total,
-      paymentMethod: sale.paymentMethod,
+      amount: updated.total,
+      paymentMethod: updated.paymentMethod ?? undefined,
       referenceId: saleId,
     });
-
-    for (const item of sale.items) {
-      const prod = await productsDB.getById(item.productId);
-      if (!prod) throw new Error('PRODUCT_NOT_FOUND');
-
-      await productsDB.save({ ...prod, stock: prod.stock - item.quantity });
-      await inventoryDB.save({
-        id: generateId(),
-        date: sale.date,
-        productId: prod.id,
-        type: 'salida',
-        quantity: item.quantity,
-        referenceId: saleId,
-        reason: sale.customerId === null
-          ? 'Venta POS - Consumidor Final'
-          : 'Venta a cliente registrado',
-      });
-    }
 
     await insertSaleAuditLog({
       saleId,

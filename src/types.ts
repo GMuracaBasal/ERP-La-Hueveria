@@ -72,11 +72,21 @@ export interface SaleItem {
   subtotal: number;
 }
 
+/** Origen de la venta: POS minorista vs Terminal mayorista. */
+export type PointOfSale = 'mostrador' | 'mayorista';
+
+/** Condición comercial: Contado (venta+cobro) o Cuenta Corriente (solo Debe). */
+export type SaleCondition = 'contado' | 'cuenta_corriente';
+
 export interface Sale {
   id: string;
   date: string;
-  customerId: string | null; // null represents 'Consumidor Final'
-  paymentMethod: string;
+  /** Cliente titular (siempre un id de customers; Consumidor Final es un cliente real). */
+  customerId: string | null;
+  pointOfSale: PointOfSale;
+  condition: SaleCondition;
+  /** Medio real del cobro. Null cuando condition = cuenta_corriente (aún no hay cobro). */
+  paymentMethod: string | null;
   total: number;
   items: SaleItem[];
   voided?: boolean;

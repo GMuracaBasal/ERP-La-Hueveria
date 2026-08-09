@@ -1,12 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { salesDB } from '../lib/db';
 import { Sale, SaleItem, Product, Customer, PriceList, Settings } from '../types';
 import { Button, Modal, Badge, SearchableSelect, useToast } from '../components/ui';
 import { formatCurrency, formatFechaHora } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
+import { isConsumidorFinal } from '../lib/consumidorFinal';
 import {
   canModifySale,
-  isMostradorContadoSale,
+  isContadoSale,
+  isCuentaCorrienteSale,
+  isEditableSale,
   getSaleRpcErrorMessage,
 } from '../lib/salePermissions';
 
@@ -69,17 +72,31 @@ export default function SaleTicketModal({
     if (!sale) return;
     setMode('view');
     setCustomerId(sale.customerId || '');
-    setPaymentMethod(sale.paymentMethod);
+    setPaymentMethod(sale.paymentMethod || 'Efectivo');
     setItems(sale.items.map((i) => ({ ...i })));
     setEditReason('');
     setVoidReason('');
   }, [sale]);
 
+  const namedCustomers = useMemo(
+    () => customers.filter((c) => !isConsumidorFinal(c)),
+    [customers],
+  );
+
   if (!sale) return null;
 
   const isVoided = !!sale.voided;
-  const canModify = canModifySale(user, sale) && isMostradorContadoSale(sale);
-  const paymentOptions = posStyle || sale.customerId === null ? POS_PAYMENT_OPTIONS : TERMINAL_PAYMENT_OPTIONS;
+  const baseCanModify = canModifySale(user, sale);
+  const canEdit = baseCanModify && isEditableSale(sale);
+  const canVoid = baseCanModify;
+  const paymentOptions =
+    posStyle || sale.pointOfSale === 'mostrador'
+      ? POS_PAYMENT_OPTIONS
+      : TERMINAL_PAYMENT_OPTIONS;
+
+  const customerName = sale.customerId
+    ? customers.find((c) => c.id === sale.customerId)?.name
+    : 'Consumidor Final';
 
   const getActivePrices = (): Record<string, number> => {
     let targetListId = settings?.defaultPriceListId;
@@ -119,6 +136,13 @@ export default function SaleTicketModal({
       toast.error('Agregá al menos un producto válido.');
       return;
     }
+
+    const resolvedCustomerId = posStyle ? sale.customerId : customerId;
+    if (!resolvedCustomerId) {
+      toast.error('Debés seleccionar un cliente.');
+      return;
+    }
+
     for (const item of items) {
       const available = getAvailableStock(item.productId, sale, products);
       if (available < item.quantity) {
@@ -128,13 +152,16 @@ export default function SaleTicketModal({
       }
     }
 
+    const editCustomerName = customers.find((c) => c.id === resolvedCustomerId)?.name;
+
     setSubmitting(true);
     try {
       await salesDB.editSale(sale.id, user.id, editReason, {
-        customerId: posStyle ? null : customerId || null,
+        customerId: resolvedCustomerId,
         paymentMethod,
         date: sale.date,
         items,
+        customerName: editCustomerName,
       });
       toast.success('Venta actualizada correctamente.');
       try {
@@ -195,11 +222,13 @@ export default function SaleTicketModal({
             </div>
             <div className="text-sm">
               <span className="font-semibold">Cliente:</span>{' '}
-              {sale.customerId
-                ? customers.find((c) => c.id === sale.customerId)?.name
-                : 'Consumidor Final'}
+              {customerName || 'Consumidor Final'}
               <br />
-              <span className="font-semibold">Pago:</span> {sale.paymentMethod}
+              <span className="font-semibold">Condición:</span>{' '}
+              {isCuentaCorrienteSale(sale) ? 'Cuenta Corriente' : 'Contado'}
+              <br />
+              <span className="font-semibold">Pago:</span>{' '}
+              {sale.paymentMethod || '—'}
             </div>
             <table className="w-full text-sm text-left font-mono">
               <thead>
@@ -233,21 +262,21 @@ export default function SaleTicketModal({
             <Button variant="secondary" onClick={() => window.print()}>
               Imprimir
             </Button>
-            {!isVoided && canModify && (
-              <>
-                <Button variant="secondary" onClick={() => setMode('edit')}>Editar</Button>
-                <Button variant="danger" onClick={() => setMode('void')}>Anular</Button>
-              </>
+            {!isVoided && canEdit && (
+              <Button variant="secondary" onClick={() => setMode('edit')}>Editar</Button>
+            )}
+            {!isVoided && canVoid && (
+              <Button variant="danger" onClick={() => setMode('void')}>Anular</Button>
             )}
           </div>
-          {!isVoided && !canModify && isMostradorContadoSale(sale) && user?.role === 'vendedor' && (
+          {!isVoided && !baseCanModify && isContadoSale(sale) && user?.role === 'vendedor' && (
             <p className="text-xs text-brand-muted italic pt-2 no-print">
               Solo un administrador puede modificar ventas de cajas ya cerradas.
             </p>
           )}
-          {!isVoided && !isMostradorContadoSale(sale) && (
+          {!isVoided && isCuentaCorrienteSale(sale) && baseCanModify && (
             <p className="text-xs text-brand-muted italic pt-2 no-print">
-              Las ventas en Cuenta Corriente no pueden modificarse en esta etapa.
+              Las ventas en Cuenta Corriente no se editan: anulá y registrá de nuevo si hace falta.
             </p>
           )}
         </div>
@@ -255,18 +284,18 @@ export default function SaleTicketModal({
 
       {mode === 'edit' && (
         <form onSubmit={handleEditSave} className="space-y-4 no-print">
-          {!posStyle && (
+          {!posStyle && sale.pointOfSale === 'mayorista' && (
             <div>
               <label className="block text-sm mb-1">Cliente</label>
               <SearchableSelect
-                options={[
-                  { value: '', label: 'Consumidor Final' },
-                  ...customers.map((c) => ({ value: c.id, label: c.name })),
-                ]}
+                options={namedCustomers.map((c) => ({ value: c.id, label: c.name }))}
                 value={
                   customerId
-                    ? { value: customerId, label: customers.find((c) => c.id === customerId)?.name }
-                    : { value: '', label: 'Consumidor Final' }
+                    ? {
+                        value: customerId,
+                        label: customers.find((c) => c.id === customerId)?.name,
+                      }
+                    : null
                 }
                 onChange={(selected: { value: string } | null) => {
                   setCustomerId(selected?.value || '');
@@ -378,7 +407,9 @@ export default function SaleTicketModal({
       {mode === 'void' && (
         <div className="space-y-4 no-print">
           <p className="text-sm text-brand-muted">
-            Esta acción revertirá el stock y el ingreso en caja. No se puede deshacer.
+            {isCuentaCorrienteSale(sale)
+              ? 'Esta acción revertirá el stock y anulará el Debe en la cuenta corriente. No se puede deshacer.'
+              : 'Esta acción revertirá el stock, el cobro en cuenta corriente y el ingreso en caja. No se puede deshacer.'}
           </p>
           <p className="text-sm">
             Ticket <strong>#{sale.id.slice(0, 8).toUpperCase()}</strong> —{' '}

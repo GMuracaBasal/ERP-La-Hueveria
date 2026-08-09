@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { salesDB, productsDB, financeDB, priceListsDB, db } from '../lib/db';
-import { FinanceMovement, Sale, Product, PriceList, Settings } from '../types';
+import { salesDB, productsDB, financeDB, priceListsDB, customersDB, db } from '../lib/db';
+import { FinanceMovement, Sale, Product, PriceList, Settings, Customer } from '../types';
 import { formatCurrency, formatFecha, formatFechaHora, parseLocalDate } from '../lib/utils';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -13,19 +13,30 @@ export default function Caja() {
   const [allSales, setAllSales] = useState<Sale[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [priceLists, setPriceLists] = useState<PriceList[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [dateRange, setDateRange] = useState(defaultDateRange);
 
   const loadData = async () => {
-    const allFin = await financeDB.getAll();
-    setAllFinances(allFin.filter((f) => f.type === 'ingreso'));
+    const sales = await salesDB.getAll({ includeVoided: true });
+    const mostradorSales = sales
+      .filter((s) => s.pointOfSale === 'mostrador')
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    setAllSales(mostradorSales);
 
-    const sales = await salesDB.getAll();
-    setAllSales(sales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+    const mostradorIds = new Set(mostradorSales.map((s) => s.id));
+    const allFin = await financeDB.getAll();
+    // Caja del POS: solo ingresos ligados a ventas de mostrador
+    setAllFinances(
+      allFin.filter(
+        (f) => f.type === 'ingreso' && !!f.referenceId && mostradorIds.has(f.referenceId),
+      ),
+    );
 
     setProducts(await productsDB.getAll());
     setPriceLists(await priceListsDB.getAll());
+    setCustomers(await customersDB.getAll());
     setSettings(await db.getSettings());
   };
 
@@ -130,7 +141,7 @@ export default function Caja() {
                       </td>
                       <td className="px-6 py-4">
                         <Badge variant={s.paymentMethod === 'Efectivo' ? 'success' : 'default'}>
-                          {s.paymentMethod}
+                          {s.paymentMethod || '—'}
                         </Badge>
                       </td>
                       <td className="px-6 py-4 text-right font-bold text-green-700">
@@ -155,7 +166,7 @@ export default function Caja() {
         onClose={() => setSelectedSale(null)}
         onUpdated={loadData}
         products={products}
-        customers={[]}
+        customers={customers}
         priceLists={priceLists}
         settings={settings}
         posStyle

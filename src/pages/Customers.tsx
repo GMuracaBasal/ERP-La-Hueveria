@@ -4,6 +4,7 @@ import { AccountMovement, Customer, PriceList } from '../types';
 import { Button, ActionButtons, Modal, Badge, SearchableSelect, useConfirm, useToast } from '../components/ui';
 import { formatCurrency, generateId } from '../lib/utils';
 import { balancesByParty } from '../lib/accountMovements';
+import { isConsumidorFinal } from '../lib/consumidorFinal';
 import CuentaCorriente from '../components/CuentaCorriente';
 import RegistrarMovimientoModal from '../components/RegistrarMovimientoModal';
 
@@ -101,6 +102,11 @@ export default function Customers() {
   };
 
   const handleDelete = async (id: string) => {
+    const target = customers.find((c) => c.id === id);
+    if (target && isConsumidorFinal(target)) {
+      toast.error('No se puede eliminar el cliente Consumidor Final (requerido por el POS).');
+      return;
+    }
     const ok = await confirm({
       title: 'Eliminar cliente',
       description: 'Esta acción no se puede deshacer.',

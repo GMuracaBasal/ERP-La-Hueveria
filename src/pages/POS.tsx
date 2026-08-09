@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { productsDB, salesDB, inventoryDB, financeDB, priceListsDB, db } from '../lib/db';
+import { productsDB, salesDB, priceListsDB, db } from '../lib/db';
 import { Product, SaleItem, PriceList, Settings } from '../types';
-import { Button } from '../components/ui';
+import { Button, useToast } from '../components/ui';
 import { generateId, formatCurrency } from '../lib/utils';
+import { getConsumidorFinalId } from '../lib/consumidorFinal';
+import { getSaleRpcErrorMessage } from '../lib/salePermissions';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function POS() {
+  const { user } = useAuth();
+  const { toast } = useToast();
   const [products, setProducts] = useState<Product[]>([]);
   const [defaultList, setDefaultList] = useState<PriceList | null>(null);
   const [search, setSearch] = useState('');
@@ -13,6 +18,7 @@ export default function POS() {
   const [cashReceived, setCashReceived] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<{total: number, change: number | null} | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -94,71 +100,54 @@ export default function POS() {
   const total = cartItems.reduce((acc, item) => acc + item.subtotal, 0);
 
   const handleSaveSale = async () => {
-    if (cartItems.length === 0) return;
-    
+    if (cartItems.length === 0 || !user || submitting) return;
+
     if (paymentMethod === 'Efectivo') {
       const received = parseFloat(cashReceived);
       if (isNaN(received) || received < total) {
-        alert("Monto recibido es insuficiente");
+        toast.error('Monto recibido es insuficiente');
         return;
       }
     }
 
-    const saleId = generateId();
-    const dateStr = new Date().toISOString();
+    setSubmitting(true);
+    try {
+      const saleId = generateId();
+      const dateStr = new Date().toISOString();
+      const customerId = await getConsumidorFinalId();
 
-    // 1. Guardar la venta
-    await salesDB.save({
-      id: saleId,
-      date: dateStr,
-      customerId: null, // Consumidor Final
-      paymentMethod: paymentMethod,
-      total: total,
-      items: cartItems
-    });
-
-    // 2. Registrar ingreso en finanzas
-    await financeDB.save({
-      id: generateId(),
-      date: dateStr,
-      type: 'ingreso',
-      concept: `Venta POS #${saleId.slice(0, 6).toUpperCase()}`,
-      amount: total,
-      paymentMethod: paymentMethod,
-      referenceId: saleId
-    });
-
-    // 3. Actualizar inventario y stock
-    for (const item of cartItems) {
-      const prod = await productsDB.getById(item.productId);
-      if (prod) {
-        prod.stock -= item.quantity;
-        await productsDB.save(prod);
-        await inventoryDB.save({
-          id: generateId(),
+      await salesDB.createSale({
+        userId: user.id,
+        customerName: 'Consumidor Final',
+        sale: {
+          id: saleId,
           date: dateStr,
-          productId: prod.id,
-          type: 'salida',
-          quantity: item.quantity,
-          referenceId: saleId,
-          reason: 'Venta POS - Consumidor Final'
-        });
-      }
+          customerId,
+          pointOfSale: 'mostrador',
+          condition: 'contado',
+          paymentMethod,
+          total,
+          items: cartItems,
+        },
+      });
+
+      const received = parseFloat(cashReceived);
+      const change = (paymentMethod === 'Efectivo' && !isNaN(received)) ? received - total : null;
+
+      setSuccessMessage({ total, change });
+      setCartItems([]);
+      setCashReceived('');
+      setPaymentMethod('Efectivo');
+      loadData();
+
+      setTimeout(() => {
+        setSuccessMessage(null);
+      }, 3000);
+    } catch (err) {
+      toast.error(getSaleRpcErrorMessage(err));
+    } finally {
+      setSubmitting(false);
     }
-
-    const received = parseFloat(cashReceived);
-    const change = (paymentMethod === 'Efectivo' && !isNaN(received)) ? received - total : null;
-
-    setSuccessMessage({ total, change });
-    
-    setCartItems([]);
-    setCashReceived('');
-    setPaymentMethod('Efectivo');
-    loadData(); // Refrescar stock
-
-    setTimeout(() => {
-      setSuccessMessage(null);
-    }, 3000);
   };
 
   if (successMessage) {
@@ -357,10 +346,10 @@ export default function POS() {
             <Button 
               size="lg" 
               className="w-full font-bold uppercase tracking-wide py-4 shadow-lg active:scale-[0.99] transition-transform text-center flex justify-center"
-              disabled={cartItems.length === 0}
+              disabled={cartItems.length === 0 || submitting}
               onClick={handleSaveSale}
             >
-              Cerrar Venta
+              {submitting ? 'Guardando…' : 'Cerrar Venta'}
             </Button>
             <Button 
               variant="secondary" 
