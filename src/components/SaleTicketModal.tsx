@@ -2,8 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { salesDB } from '../lib/db';
 import { Sale, SaleItem, Product, Customer, PriceList, Settings, SaleCondition } from '../types';
-import { Button, Modal, Badge, SearchableSelect, useToast } from '../components/ui';
-import { formatCurrency, formatFechaHora } from '../lib/utils';
+import { Button, Modal, SearchableSelect, useToast } from '../components/ui';
+import { formatCurrency } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { isConsumidorFinal } from '../lib/consumidorFinal';
 import {
@@ -17,74 +17,9 @@ import {
   paymentMethodLabel,
   type PaymentMethodCode,
 } from '../lib/paymentMethods';
+import PrintableVoucher from './PrintableVoucher';
 
 type Mode = 'view' | 'edit' | 'void';
-
-/** Contenido del comprobante (pantalla + portal de impresión). */
-function SaleTicketBody({
-  sale,
-  products,
-  settings,
-  customerName,
-  isVoided,
-}: {
-  sale: Sale;
-  products: Product[];
-  settings: Settings | null;
-  customerName: string;
-  isVoided: boolean;
-}) {
-  return (
-    <>
-      <div className="text-center pb-4 border-b border-dashed print-ticket-header relative">
-        {isVoided && (
-          <Badge variant="danger" className="mb-2 print-voided">ANULADO</Badge>
-        )}
-        <h2 className="text-lg font-bold">{settings?.businessName}</h2>
-        <div className="text-sm text-gray-500">Ticket #{sale.id.slice(0, 8).toUpperCase()}</div>
-        <div className="text-sm text-gray-500">
-          {formatFechaHora(sale.date)}
-        </div>
-      </div>
-      <div className="text-sm">
-        <span className="font-semibold">Cliente:</span>{' '}
-        {customerName || 'Consumidor Final'}
-        <br />
-        <span className="font-semibold">Condición:</span>{' '}
-        {isCuentaCorrienteSale(sale) ? 'Cuenta Corriente' : 'Contado'}
-        <br />
-        <span className="font-semibold">Pago:</span>{' '}
-        {paymentMethodLabel(sale.paymentMethod)}
-      </div>
-      <table className="w-full text-sm text-left font-mono">
-        <thead>
-          <tr className="border-b">
-            <th className="p-1">Desc</th>
-            <th className="p-1 text-center">Cant</th>
-            <th className="p-1 text-right">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sale.items.map((i, idx) => (
-            <tr key={idx}>
-              <td className="p-1 pr-2 truncate max-w-[200px]">
-                {products.find((p) => p.id === i.productId)?.name}
-              </td>
-              <td className="p-1 text-center">{i.quantity}</td>
-              <td className="p-1 text-right">{formatCurrency(i.subtotal)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="border-t border-dashed pt-4 flex justify-between items-end font-bold text-lg print-total">
-        <span>TOTAL</span>
-        <span className={isVoided ? 'line-through text-gray-400' : ''}>
-          {formatCurrency(sale.total)}
-        </span>
-      </div>
-    </>
-  );
-}
 
 interface SaleTicketModalProps {
   sale: Sale | null;
@@ -167,9 +102,39 @@ export default function SaleTicketModal({
       ? POS_PAYMENT_OPTIONS
       : TERMINAL_PAYMENT_OPTIONS;
 
-  const customerName = sale.customerId
-    ? customers.find((c) => c.id === sale.customerId)?.name
-    : 'Consumidor Final';
+  const customer = sale.customerId
+    ? customers.find((c) => c.id === sale.customerId)
+    : undefined;
+  const customerName = customer?.name || 'Consumidor Final';
+
+  const voucher = {
+    docType: 'venta' as const,
+    documentNumber: sale.id,
+    date: sale.date,
+    businessName: settings?.businessName || 'La Huevería',
+    party: {
+      sectionTitle: 'DESTINATARIO',
+      name: customerName,
+      taxId: null,
+      address: customer?.address || null,
+      phone: customer?.phone || null,
+    },
+    commercial: {
+      condition: isCuentaCorrienteSale(sale) ? 'Cuenta Corriente' : 'Contado',
+      paymentMethod: isCuentaCorrienteSale(sale)
+        ? '—'
+        : paymentMethodLabel(sale.paymentMethod),
+      pointOfSale: sale.pointOfSale === 'mayorista' ? 'Mayorista' : 'Mostrador',
+    },
+    items: sale.items.map((i) => ({
+      productName: products.find((p) => p.id === i.productId)?.name || 'Producto',
+      quantity: i.quantity,
+      unitPrice: i.unitPrice,
+      subtotal: i.subtotal,
+    })),
+    total: sale.total,
+    voided: isVoided,
+  };
 
   const getActivePrices = (): Record<string, number> => {
     let targetListId = settings?.defaultPriceListId;
@@ -287,31 +252,17 @@ export default function SaleTicketModal({
     'Ticket de Venta';
 
   return (
-    <Modal isOpen={!!sale} onClose={onClose} title={title}>
+    <Modal isOpen={!!sale} onClose={onClose} title={title} wide={mode === 'view'}>
       {mode === 'view' && (
         <div className="space-y-4">
-          {/* Vista en pantalla (dentro del modal; no se imprime) */}
-          <div className="space-y-4 no-print">
-            <SaleTicketBody
-              sale={sale}
-              products={products}
-              settings={settings}
-              customerName={customerName || 'Consumidor Final'}
-              isVoided={isVoided}
-            />
+          <div className="no-print">
+            <PrintableVoucher {...voucher} className="voucher-preview" />
           </div>
 
-          {/* Portal a body: fuera del modal para que @media print no lo recorte */}
           {typeof document !== 'undefined' &&
             createPortal(
-              <div className="printable-ticket space-y-4" aria-hidden="true">
-                <SaleTicketBody
-                  sale={sale}
-                  products={products}
-                  settings={settings}
-                  customerName={customerName || 'Consumidor Final'}
-                  isVoided={isVoided}
-                />
+              <div className="printable-ticket" aria-hidden="true">
+                <PrintableVoucher {...voucher} />
               </div>,
               document.body,
             )}

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { purchasesDB } from '../lib/db';
-import { Purchase, PurchaseItem, Product, Supplier, PurchaseCondition } from '../types';
-import { Button, Modal, Badge, SearchableSelect, useToast } from './ui';
-import { formatCurrency, formatFechaHora } from '../lib/utils';
+import { createPortal } from 'react-dom';
+import { purchasesDB, db } from '../lib/db';
+import { Purchase, PurchaseItem, Product, Supplier, PurchaseCondition, Settings } from '../types';
+import { Button, Modal, SearchableSelect, useToast } from './ui';
+import { formatCurrency } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { canModifyPurchase, getPurchaseErrorMessage } from '../lib/purchasePermissions';
 import {
@@ -10,6 +11,7 @@ import {
   paymentMethodLabel,
   type PaymentMethodCode,
 } from '../lib/paymentMethods';
+import PrintableVoucher from './PrintableVoucher';
 
 type Mode = 'view' | 'edit' | 'void';
 
@@ -57,6 +59,13 @@ export default function PurchaseTicketModal({
   const [editReason, setEditReason] = useState('');
   const [voidReason, setVoidReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [settings, setSettings] = useState<Settings | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      setSettings(await db.getSettings());
+    })();
+  }, []);
 
   useEffect(() => {
     if (!purchase) return;
@@ -81,10 +90,39 @@ export default function PurchaseTicketModal({
 
   const isVoided = !!purchase.voided;
   const canModify = canModifyPurchase(user, purchase);
-  const supplierName = suppliers.find((s) => s.id === purchase.supplierId)?.name;
+  const supplier = suppliers.find((s) => s.id === purchase.supplierId);
+  const supplierName = supplier?.name;
   const editTotal = items.reduce((acc, i) => acc + i.subtotal, 0);
   const conditionLabel = (c: PurchaseCondition) =>
     c === 'cuenta_corriente' ? 'Cuenta Corriente' : 'Contado';
+  const isCC = purchase.condition === 'cuenta_corriente';
+
+  const voucher = {
+    docType: 'compra' as const,
+    documentNumber: purchase.id,
+    date: purchase.date,
+    businessName: settings?.businessName || 'La Huevería',
+    party: {
+      sectionTitle: 'PROVEEDOR',
+      name: supplierName || '—',
+      taxId: null,
+      address: supplier?.address || null,
+      phone: supplier?.phone || null,
+      invoiceNumber: purchase.invoiceNumber || null,
+    },
+    commercial: {
+      condition: conditionLabel(purchase.condition),
+      paymentMethod: isCC ? '—' : paymentMethodLabel(purchase.paymentMethod),
+    },
+    items: purchase.items.map((i) => ({
+      productName: products.find((p) => p.id === i.productId)?.name || 'Producto',
+      quantity: i.quantity,
+      unitPrice: i.unitCost,
+      subtotal: i.subtotal,
+    })),
+    total: purchase.total,
+    voided: isVoided,
+  };
 
   const updateItem = (index: number, field: keyof PurchaseItem, value: string | number) => {
     const newItems = [...items];
@@ -178,68 +216,36 @@ export default function PurchaseTicketModal({
     'Comprobante de Compra';
 
   return (
-    <Modal isOpen={!!purchase} onClose={onClose} title={title}>
+    <Modal isOpen={!!purchase} onClose={onClose} title={title} wide={mode === 'view'}>
       {mode === 'view' && (
         <div className="space-y-4">
-          <div className="text-center pb-4 border-b border-dashed">
-            {isVoided && <Badge variant="danger" className="mb-2">ANULADO</Badge>}
-            <div className="text-sm text-gray-500">
-              Compra #{purchase.id.slice(0, 8).toUpperCase()}
-            </div>
-            <div className="text-sm text-gray-500">{formatFechaHora(purchase.date)}</div>
+          <div className="no-print">
+            <PrintableVoucher {...voucher} className="voucher-preview" />
           </div>
-          <div className="text-sm space-y-1">
-            <div>
-              <span className="font-semibold">Proveedor:</span> {supplierName || '—'}
-            </div>
-            <div>
-              <span className="font-semibold">Factura:</span>{' '}
-              {purchase.invoiceNumber || 'S/N'}
-            </div>
-            <div>
-              <span className="font-semibold">Condición:</span>{' '}
-              {conditionLabel(purchase.condition)}
-            </div>
-            <div>
-              <span className="font-semibold">Pago:</span>{' '}
-              {paymentMethodLabel(purchase.paymentMethod)}
-            </div>
-          </div>
-          <table className="w-full text-sm text-left">
-            <thead>
-              <tr className="border-b">
-                <th className="p-1">Producto</th>
-                <th className="p-1 text-center">Cant</th>
-                <th className="p-1 text-right">Costo U.</th>
-                <th className="p-1 text-right">Subtotal</th>
-              </tr>
-            </thead>
-            <tbody>
-              {purchase.items.map((i, idx) => (
-                <tr key={idx}>
-                  <td className="p-1 pr-2">
-                    {products.find((p) => p.id === i.productId)?.name}
-                  </td>
-                  <td className="p-1 text-center">{i.quantity}</td>
-                  <td className="p-1 text-right">{formatCurrency(i.unitCost)}</td>
-                  <td className="p-1 text-right">{formatCurrency(i.subtotal)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="border-t pt-4 flex justify-between font-bold text-lg">
-            <span>TOTAL</span>
-            <span className={isVoided ? 'line-through text-gray-400' : ''}>
-              {formatCurrency(purchase.total)}
-            </span>
-          </div>
+
+          {typeof document !== 'undefined' &&
+            createPortal(
+              <div className="printable-ticket" aria-hidden="true">
+                <PrintableVoucher {...voucher} />
+              </div>,
+              document.body,
+            )}
+
           {purchase.notes ? (
-            <p className="text-sm text-brand-muted">
+            <p className="text-sm text-brand-muted no-print">
               <span className="font-semibold text-gray-700">Notas:</span> {purchase.notes}
             </p>
           ) : null}
 
-          <div className="flex justify-end gap-2 pt-4 border-t">
+          <p className="text-xs text-brand-muted no-print">
+            Tip: en el diálogo de impresión, desactivá “Encabezados y pies de página” para no
+            imprimir la fecha/URL del navegador.
+          </p>
+
+          <div className="flex justify-end gap-2 pt-4 border-t no-print">
+            <Button variant="secondary" onClick={() => window.print()}>
+              Imprimir
+            </Button>
             {!isVoided && canModify && (
               <>
                 <Button variant="secondary" onClick={() => setMode('edit')}>Editar</Button>
@@ -248,7 +254,7 @@ export default function PurchaseTicketModal({
             )}
           </div>
           {!isVoided && !canModify && user?.role === 'vendedor' && (
-            <p className="text-xs text-brand-muted italic">
+            <p className="text-xs text-brand-muted italic no-print">
               Solo un administrador puede modificar compras de días ya cerrados.
             </p>
           )}
@@ -256,7 +262,7 @@ export default function PurchaseTicketModal({
       )}
 
       {mode === 'edit' && (
-        <form onSubmit={handleEditSave} className="space-y-4">
+        <form onSubmit={handleEditSave} className="space-y-4 no-print">
           <div>
             <label className="block text-sm mb-1">Proveedor</label>
             <SearchableSelect
@@ -429,7 +435,7 @@ export default function PurchaseTicketModal({
       )}
 
       {mode === 'void' && (
-        <div className="space-y-4">
+        <div className="space-y-4 no-print">
           <p className="text-sm text-brand-muted">
             Esta acción revertirá el stock y anulará los asientos en cuenta corriente del proveedor
             {purchase.condition === 'contado' ? ' y el egreso en caja' : ''}. No se puede deshacer.

@@ -213,7 +213,20 @@ export function Badge({ children, className, variant = 'default' }: { children: 
 // ─────────────────────────────────────────────────────────
 // MODAL
 // ─────────────────────────────────────────────────────────
-export function Modal({ isOpen, onClose, title, children }: { isOpen: boolean, onClose: () => void, title: string, children: React.ReactNode }) {
+export function Modal({
+  isOpen,
+  onClose,
+  title,
+  children,
+  wide = false,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+  /** Ancho mayor para comprobantes formales (vista previa A4). */
+  wide?: boolean;
+}) {
   // Cierre con ESC
   useEffect(() => {
     if (!isOpen) return;
@@ -238,11 +251,16 @@ export function Modal({ isOpen, onClose, title, children }: { isOpen: boolean, o
           <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={onClose} />
         </div>
         <span className="hidden sm:inline-block sm:align-middle sm:h-screen no-print" aria-hidden="true">&#8203;</span>
-        <div className="relative z-10 inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg w-full border border-brand-border">
+        <div
+          className={cn(
+            'relative z-10 inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle w-full border border-brand-border',
+            wide ? 'sm:max-w-3xl' : 'sm:max-w-lg',
+          )}
+        >
           <div className="bg-white px-6 pt-6 pb-6">
             <div className="flex items-center justify-between border-b border-brand-border pb-4 mb-4 no-print">
               <h3 id="modal-title" className="text-xl font-bold text-brand-navy">{title}</h3>
-              <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors no-print">
                 <X className="w-5 h-5" />
               </button>
             </div>
