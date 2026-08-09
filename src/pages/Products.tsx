@@ -3,7 +3,6 @@ import { productsDB, priceListsDB, inventoryDB } from '../lib/db';
 import { Product } from '../types';
 import { Button, ActionButtons, Modal, Badge, SearchableSelect, useConfirm, useToast } from '../components/ui';
 import { generateId, formatCurrency } from '../lib/utils';
-import { format } from 'date-fns';
 
 export default function Products() {
   const { confirm } = useConfirm();

@@ -186,7 +186,7 @@ export default function POS() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] overflow-hidden -m-4 sm:-m-8">
+    <div className="flex h-[calc(100vh-14rem)] min-h-[480px] overflow-hidden rounded-xl border border-brand-border bg-white">
       {/* Columna Izquierda: Grilla */}
       <div className="w-[60%] bg-brand-cream flex flex-col border-r border-brand-border">
         <div className="p-6 border-b border-brand-border bg-white flex flex-col gap-4">

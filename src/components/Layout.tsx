@@ -1,23 +1,37 @@
-import React, { useState, useEffect } from 'react';
-import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { cn } from '../lib/utils';
 import {
   Home, Package, DollarSign, Truck, Users,
-  ShoppingCart, FileText, Activity, PieChart,
-  Menu, Egg, Sun, Moon,
+  ShoppingCart, FileText, PieChart,
+  Menu, Egg, Sun, Moon, ArrowDownCircle, ArrowUpCircle,
 } from 'lucide-react';
 import { db } from '../lib/db';
 import { Settings } from '../types';
-import { Button } from './ui';
 import { BasalLogo } from './BasalLogo';
-import { MODULES, canAccess } from '../lib/modules';
+import SidebarModuleGroup from './SidebarModuleGroup';
+import {
+  MODULES,
+  canAccess,
+  canAccessModule,
+  firstAccessibleSectionPath,
+} from '../lib/modules';
 import { useTheme } from '../contexts/ThemeContext';
+import { cn, formatFechaHeaderDay } from '../lib/utils';
 
-const ICONS: Record<string, any> = {
-  inicio: Home, ventas: FileText, pos: ShoppingCart, caja: PieChart,
-  productos: Package, inventario: Activity, clientes: Users,
-  compras: ShoppingCart, 'listas-precios': DollarSign, proveedores: Truck, finanzas: PieChart,
+const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  inicio: Home,
+  inventario: Package,
+  ingresos: ArrowUpCircle,
+  egresos: ArrowDownCircle,
+  finanzas: PieChart,
+  usuarios: Users,
+  productos: Package,
+  ventas: FileText,
+  pos: ShoppingCart,
+  compras: ShoppingCart,
+  proveedores: Truck,
+  'listas-precios': DollarSign,
 };
 
 export default function Layout() {
@@ -27,41 +41,62 @@ export default function Layout() {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [openModules, setOpenModules] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     (async () => setSettings(await db.getSettings()))();
   }, []);
+
+  const visibleModules = useMemo(
+    () => MODULES.filter((m) => user && canAccessModule(user, m)),
+    [user],
+  );
+
+  const isPathActive = (path: string) => location.pathname === path;
+
+  const headerDate = formatFechaHeaderDay();
+
+  // Al cargar / cambiar de ruta: el módulo de la sección activa queda desplegado (sin cerrar los demás)
+  useEffect(() => {
+    const activeMod = visibleModules.find((m) =>
+      m.sections.some((s) => isPathActive(s.path)),
+    );
+    if (!activeMod) return;
+    setOpenModules((prev) => {
+      if (prev.has(activeMod.id)) return prev;
+      const next = new Set(prev);
+      next.add(activeMod.id);
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, visibleModules]);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
-  const moduleItems = MODULES
-    .filter((m) => user && canAccess(user, m.id))
-    .map((m) => ({ name: m.label, path: m.path, icon: ICONS[m.id] }));
-
-  const navItems = [
-    ...moduleItems,
-    ...(user?.role === 'admin'
-      ? [{ name: 'Usuarios', path: '/usuarios', icon: Users }]
-      : []),
-  ];
+  const toggleModule = (moduleId: string) => {
+    setOpenModules((prev) => {
+      const next = new Set(prev);
+      if (next.has(moduleId)) next.delete(moduleId);
+      else next.add(moduleId);
+      return next;
+    });
+  };
 
   return (
     <div className="flex h-screen bg-[var(--basal-bg)] overflow-hidden text-[var(--basal-text)]">
-      {/* Mobile sidebar overlay */}
       {sidebarOpen && (
-        <div 
+        <div
           className="fixed inset-0 z-20 bg-black/50 lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
-      {/* Sidebar */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-30 w-[220px] bg-brand-dark border-r border-white/10 transform transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:inset-auto flex flex-col",
-        sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        'fixed inset-y-0 left-0 z-30 w-[220px] bg-brand-dark border-r border-white/10 transform transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:inset-auto flex flex-col',
+        sidebarOpen ? 'translate-x-0' : '-translate-x-full'
       )}>
         <div className="p-6 flex items-center gap-3 border-b border-white/10">
           <div className="w-10 h-10 bg-brand-teja rounded-xl flex items-center justify-center shadow-lg">
@@ -73,31 +108,39 @@ export default function Layout() {
           </span>
         </div>
 
-        <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path + '/'));
-              return (
-                <Link
-                  key={item.name}
-                  to={item.path}
-                  onClick={() => setSidebarOpen(false)}
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors font-semibold text-sm",
-                    isActive
-                      ? "bg-brand-teja text-white"
-                      : "text-white/50 hover:bg-white/7 hover:text-white"
-                  )}
-                >
-                  <Icon className="w-5 h-5 flex-shrink-0" />
-                  {item.name}
-                </Link>
-              );
-            })}
+        <nav className="flex-1 px-3 py-4 space-y-3 overflow-y-auto">
+          {visibleModules.map((mod) => {
+            const Icon = ICONS[mod.icon] || Home;
+            const modulePath = user ? firstAccessibleSectionPath(user, mod) : null;
+            const accessibleSections = mod.sections.filter((s) => user && canAccess(user, s.id));
+            const moduleActive = accessibleSections.some((s) => isPathActive(s.path));
+            // Módulo con sub-secciones en la definición → accordion; un solo destino → navega
+            const collapsible = mod.sections.length > 1;
+
+            return (
+              <SidebarModuleGroup
+                key={mod.id}
+                label={mod.label}
+                icon={Icon}
+                collapsible={collapsible}
+                open={openModules.has(mod.id)}
+                onToggle={() => toggleModule(mod.id)}
+                href={modulePath}
+                moduleActive={moduleActive}
+                headerActive={!collapsible && moduleActive}
+                sections={accessibleSections.map((s) => ({
+                  id: s.id,
+                  label: s.label,
+                  path: s.path,
+                  active: isPathActive(s.path),
+                }))}
+                onNavigate={() => setSidebarOpen(false)}
+              />
+            );
+          })}
         </nav>
 
         <div className="mt-auto">
-          {/* Usuario / logout */}
           <div className="p-4 border-t border-white/10">
             <div
               onClick={handleLogout}
@@ -113,7 +156,6 @@ export default function Layout() {
             </div>
           </div>
 
-          {/* Marca Basal — obligatoria, no ocultable */}
           <div className="px-4 pb-4 flex flex-col items-center gap-1.5">
             <p className="text-[9px] font-bold uppercase tracking-widest text-white/30">
               Desarrollado por
@@ -125,7 +167,6 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* Main content */}
       <div className="flex flex-col flex-1 w-0 overflow-hidden">
         <header className="relative z-10 flex-shrink-0 h-16 bg-[var(--basal-surface)] flex items-center justify-between px-4 sm:px-8 border-b border-[var(--basal-border)]">
           <div className="flex items-center gap-4">
@@ -137,8 +178,11 @@ export default function Layout() {
             </button>
             <h1 className="text-xl font-bold text-[var(--basal-text)] hidden sm:block">Panel de Control</h1>
           </div>
-          
+
           <div className="flex items-center gap-4 sm:gap-6">
+            <p className="hidden sm:block text-sm font-medium text-[var(--basal-text-sec)]">
+              {headerDate}
+            </p>
             <button
               onClick={toggleTheme}
               className="p-2 rounded-lg hover:bg-[var(--basal-hover)] transition-colors text-[var(--basal-text-sec)]"
@@ -151,9 +195,6 @@ export default function Layout() {
                 <Sun className="w-5 h-5" />
               )}
             </button>
-            <Button onClick={() => user?.role === 'vendedor' ? navigate('/pos') : navigate('/ventas')} size="sm" className="font-bold hidden sm:flex">
-               {user?.role === 'vendedor' ? 'Ir al POS' : 'Nueva Venta'}
-            </Button>
           </div>
         </header>
 

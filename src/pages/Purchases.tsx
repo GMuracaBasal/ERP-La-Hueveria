@@ -1,22 +1,31 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { purchasesDB, suppliersDB, productsDB, inventoryDB, financeDB } from '../lib/db';
 import { Purchase, PurchaseItem, Supplier, Product } from '../types';
 import { Button, Modal, Badge, SearchableSelect, useToast } from '../components/ui';
-import { generateId, formatCurrency } from '../lib/utils';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
+import FiltroFechas, { defaultDateRange, isDateInRange } from '../components/FiltroFechas';
+import InputFecha from '../components/InputFecha';
+import { generateId, formatCurrency, formatFecha, formatFechaHora, isoDateToTimestamp, todayISODate } from '../lib/utils';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Purchases() {
+  const { user } = useAuth();
   const { toast } = useToast();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [dateRange, setDateRange] = useState(defaultDateRange);
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [detailsModal, setDetailsModal] = useState<Purchase | null>(null);
 
   const [formData, setFormData] = useState({ supplierId: '', invoiceNumber: '', notes: '' });
+  const [purchaseDate, setPurchaseDate] = useState(todayISODate);
   const [items, setItems] = useState<PurchaseItem[]>([]);
+
+  const filteredPurchases = useMemo(
+    () => purchases.filter((p) => isDateInRange(p.date, dateRange.from, dateRange.to)),
+    [purchases, dateRange],
+  );
 
   const load = async () => {
     const allPurchases = await purchasesDB.getAll();
@@ -28,6 +37,7 @@ export default function Purchases() {
 
   const handleOpenModal = () => {
     setFormData({ supplierId: '', invoiceNumber: '', notes: '' });
+    setPurchaseDate(todayISODate());
     setItems([]);
     setIsModalOpen(true);
   };
@@ -60,9 +70,10 @@ export default function Purchases() {
     if (items.length === 0 || items.some(i => !i.productId || i.quantity <= 0)) return alert('agregue productos válidos');
 
     try {
+      const purchaseDateIso = isoDateToTimestamp(purchaseDate);
       const p: Purchase = {
         id: generateId(),
-        date: new Date().toISOString(),
+        date: purchaseDateIso,
         ...formData,
         total,
         items
@@ -111,9 +122,12 @@ export default function Purchases() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center border-b pb-4">
+      <div className="flex flex-wrap justify-between items-center gap-4 border-b pb-4">
         <h1 className="text-2xl font-bold text-gray-900">Compras (Ingreso Stock)</h1>
-        <Button onClick={handleOpenModal}>Registrar Compra</Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <FiltroFechas from={dateRange.from} to={dateRange.to} onChange={setDateRange} />
+          <Button onClick={handleOpenModal}>Registrar Compra</Button>
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-brand-border flex flex-col overflow-hidden">
@@ -134,9 +148,9 @@ export default function Purchases() {
               </tr>
             </thead>
             <tbody className="text-sm text-gray-600">
-              {purchases.map(p => (
+              {filteredPurchases.map(p => (
                 <tr key={p.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                  <td className="px-6 py-3">{format(new Date(p.date), 'dd MMM yyyy', {locale: es})}</td>
+                  <td className="px-6 py-3">{formatFecha(p.date)}</td>
                   <td className="px-6 py-3">
                     <div className="font-medium text-gray-900">{suppliers.find(s=>s.id===p.supplierId)?.name || 'N/A'}</div>
                     <div className="text-xs text-gray-500">{p.invoiceNumber || 'S/N'}</div>
@@ -154,6 +168,17 @@ export default function Purchases() {
 
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Registrar Nueva Compra">
         <form onSubmit={handleSave} className="space-y-4">
+          <div>
+            <label className="block text-sm mb-1">Fecha</label>
+            <InputFecha
+              value={purchaseDate}
+              onChange={setPurchaseDate}
+              disabled={user?.role !== 'admin'}
+              required
+              maxDate={new Date()}
+              className="w-full max-w-[10rem]"
+            />
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div><label className="block text-sm mb-1">Proveedor</label>
               <SearchableSelect
@@ -204,7 +229,7 @@ export default function Purchases() {
         {detailsModal && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 text-sm">
-              <div><span className="font-semibold">Fecha:</span> {format(new Date(detailsModal.date), "dd/MM/yyyy HH:mm")}</div>
+              <div><span className="font-semibold">Fecha:</span> {formatFechaHora(detailsModal.date)}</div>
               <div><span className="font-semibold">Proveedor:</span> {suppliers.find(s=>s.id===detailsModal.supplierId)?.name}</div>
               <div><span className="font-semibold">Factura:</span> {detailsModal.invoiceNumber || 'N/A'}</div>
               <div><span className="font-semibold">Total:</span> {formatCurrency(detailsModal.total)}</div>

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Button, Modal, useToast } from './ui';
+import InputFecha from './InputFecha';
 import type { AccountPartyType } from '../types';
 import { accountMovementsDB } from '../lib/db';
-import { generateId } from '../lib/utils';
+import { generateId, parseLocalDate, todayISODate } from '../lib/utils';
 import { ajusteDebeHaber, roundMoney } from '../lib/accountMovements';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -17,11 +18,6 @@ interface RegistrarMovimientoModalProps {
 
 type Sentido = 'suma' | 'resta';
 
-function toLocalInputValue(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 export default function RegistrarMovimientoModal({
   isOpen,
   onClose,
@@ -32,7 +28,7 @@ export default function RegistrarMovimientoModal({
 }: RegistrarMovimientoModalProps) {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [date, setDate] = useState(() => toLocalInputValue(new Date()));
+  const [date, setDate] = useState(todayISODate);
   const [importe, setImporte] = useState('');
   const [sentido, setSentido] = useState<Sentido>('suma');
   const [concept, setConcept] = useState('');
@@ -40,7 +36,7 @@ export default function RegistrarMovimientoModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    setDate(toLocalInputValue(new Date()));
+    setDate(todayISODate());
     setImporte('');
     setSentido('suma');
     setConcept('');
@@ -68,9 +64,17 @@ export default function RegistrarMovimientoModal({
       return;
     }
 
+    if (!date) {
+      toast.error('La fecha es obligatoria.');
+      return;
+    }
+
     const { debe, haber } = ajusteDebeHaber(partyType, sentido, amount);
-    const now = new Date().toISOString();
-    const dateIso = new Date(date).toISOString();
+    const now = new Date();
+    const local = parseLocalDate(date);
+    local.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), 0);
+    const dateIso = local.toISOString();
+    const createdAt = now.toISOString();
 
     setSubmitting(true);
     try {
@@ -85,7 +89,7 @@ export default function RegistrarMovimientoModal({
         referenceType: 'ajuste',
         referenceId: null,
         createdBy: user.id,
-        createdAt: now,
+        createdAt,
         voided: false,
         voidedAt: null,
         voidedBy: null,
@@ -119,12 +123,11 @@ export default function RegistrarMovimientoModal({
 
         <div>
           <label className="block text-sm mb-1">Fecha</label>
-          <input
-            type="datetime-local"
-            required
-            className="w-full border p-2 rounded"
+          <InputFecha
             value={date}
-            onChange={(e) => setDate(e.target.value)}
+            required
+            onChange={setDate}
+            className="w-full border border-brand-border rounded-lg px-3 py-2 text-sm bg-white"
           />
         </div>
 

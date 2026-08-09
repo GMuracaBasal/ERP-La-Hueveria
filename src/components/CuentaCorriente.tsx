@@ -1,8 +1,7 @@
 import React from 'react';
-import { format } from 'date-fns';
 import type { AccountMovement, AccountPartyType } from '../types';
 import { Badge, Button, useConfirm, useToast } from './ui';
-import { formatCurrency } from '../lib/utils';
+import { formatCurrency, formatFechaHora } from '../lib/utils';
 import { computeBalance, withRunningBalance } from '../lib/accountMovements';
 import { accountMovementsDB } from '../lib/db';
 import { useAuth } from '../contexts/AuthContext';
@@ -100,7 +99,7 @@ export default function CuentaCorriente({
                 }`}
               >
                 <td className="px-4 py-3 whitespace-nowrap">
-                  {format(new Date(m.date), 'dd/MM/yyyy HH:mm')}
+                  {formatFechaHora(m.date)}
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap items-center gap-2">

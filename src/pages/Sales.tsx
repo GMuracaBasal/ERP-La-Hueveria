@@ -1,27 +1,36 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { salesDB, customersDB, productsDB, inventoryDB, financeDB, priceListsDB, db } from '../lib/db';
 import { Sale, SaleItem, Customer, Product, PriceList, Settings } from '../types';
 import { Button, Modal, Badge, SearchableSelect, useToast } from '../components/ui';
 import SaleTicketModal from '../components/SaleTicketModal';
-import { generateId, formatCurrency } from '../lib/utils';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
+import InputFecha from '../components/InputFecha';
+import FiltroFechas, { defaultDateRange, isDateInRange } from '../components/FiltroFechas';
+import { generateId, formatCurrency, formatFechaHora, isoDateToTimestamp, todayISODate } from '../lib/utils';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Sales() {
+  const { user } = useAuth();
   const { toast } = useToast();
   const [sales, setSales] = useState<Sale[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [priceLists, setPriceLists] = useState<PriceList[]>([]);
+  const [dateRange, setDateRange] = useState(defaultDateRange);
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [detailsModal, setDetailsModal] = useState<Sale | null>(null);
 
   const [customerId, setCustomerId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Efectivo');
+  const [saleDate, setSaleDate] = useState(todayISODate);
   const [items, setItems] = useState<SaleItem[]>([]);
 
   const [settings, setSettings] = useState<Settings | null>(null);
+
+  const filteredSales = useMemo(
+    () => sales.filter((s) => isDateInRange(s.date, dateRange.from, dateRange.to)),
+    [sales, dateRange],
+  );
 
   const load = async () => {
     const allSales = await salesDB.getAll({ includeVoided: true });
@@ -52,6 +61,7 @@ export default function Sales() {
   const handleOpenModal = () => {
     setCustomerId('');
     setPaymentMethod('Efectivo');
+    setSaleDate(todayISODate());
     setItems([]);
     setIsModalOpen(true);
   };
@@ -65,8 +75,10 @@ export default function Sales() {
     if (field === 'productId') {
       item.productId = value as string;
       item.unitPrice = activePrices[value as string] || 0;
-    } else {
-      (item as Record<string, unknown>)[field] = value;
+    } else if (field === 'quantity') {
+      item.quantity = value as number;
+    } else if (field === 'unitPrice') {
+      item.unitPrice = value as number;
     }
     
     item.subtotal = item.quantity * item.unitPrice;
@@ -90,7 +102,7 @@ export default function Sales() {
 
     try {
       const saleId = generateId();
-      const dateStr = new Date().toISOString();
+      const dateStr = isoDateToTimestamp(saleDate);
 
       const sale: Sale = {
         id: saleId,
@@ -141,9 +153,12 @@ export default function Sales() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center border-b pb-4">
+      <div className="flex flex-wrap justify-between items-center gap-4 border-b pb-4">
         <h1 className="text-2xl font-bold text-gray-900">Ventas (Terminal / Mostrador)</h1>
-        <Button onClick={handleOpenModal} size="lg" className="shadow-md">Nueva Venta</Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <FiltroFechas from={dateRange.from} to={dateRange.to} onChange={setDateRange} />
+          <Button onClick={handleOpenModal} size="lg" className="shadow-md">Nueva Venta</Button>
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-brand-border flex flex-col overflow-hidden">
@@ -166,12 +181,12 @@ export default function Sales() {
               </tr>
             </thead>
             <tbody className="text-sm text-gray-600">
-              {sales.map(s => (
+              {filteredSales.map(s => (
                 <tr
                   key={s.id}
                   className={`border-b border-gray-50 hover:bg-gray-50 transition-colors ${s.voided ? 'opacity-60' : ''}`}
                 >
-                  <td className="px-6 py-3">{format(new Date(s.date), 'dd MMM yyyy HH:mm', {locale: es})}</td>
+                  <td className="px-6 py-3">{formatFechaHora(s.date)}</td>
                   <td className="px-6 py-3 font-medium text-gray-800">
                     {s.customerId ? customers.find(c=>c.id===s.customerId)?.name : <span className="text-gray-500 italic">Consumidor Final</span>}
                   </td>
@@ -194,6 +209,17 @@ export default function Sales() {
 
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Registrar Venta" >
         <form onSubmit={handleSave} className="space-y-4">
+          <div>
+            <label className="block text-sm mb-1">Fecha</label>
+            <InputFecha
+              value={saleDate}
+              onChange={setSaleDate}
+              disabled={user?.role !== 'admin'}
+              required
+              maxDate={new Date()}
+              className="w-full max-w-[10rem]"
+            />
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div><label className="block text-sm mb-1">Cliente</label>
               <SearchableSelect 

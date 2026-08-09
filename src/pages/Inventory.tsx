@@ -1,20 +1,25 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { productsDB, inventoryDB } from '../lib/db';
 import { Product, InventoryMovement } from '../types';
 import { Badge, Button, Modal, SearchableSelect, useToast } from '../components/ui';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
-import { generateId } from '../lib/utils';
+import FiltroFechas, { defaultDateRange, isDateInRange } from '../components/FiltroFechas';
+import { generateId, formatFechaHora } from '../lib/utils';
 import { ArrowDown, ArrowUp, RefreshCcw } from 'lucide-react';
 
 export default function Inventory() {
   const { toast } = useToast();
   const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
+  const [dateRange, setDateRange] = useState(defaultDateRange);
   const [filterCategory, setFilterCategory] = useState('');
   const [search, setSearch] = useState('');
   const [isAdjModalOpen, setIsAdjModalOpen] = useState(false);
   const [adjData, setAdjData] = useState({ productId: '', quantity: 0, reason: 'Rotura' });
+
+  const filteredMovements = useMemo(
+    () => movements.filter((m) => isDateInRange(m.date, dateRange.from, dateRange.to)),
+    [movements, dateRange],
+  );
 
   const load = async () => {
     setProducts(await productsDB.getAll());
@@ -70,11 +75,14 @@ export default function Inventory() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center border-b pb-4">
-        <h1 className="text-2xl font-bold text-gray-900">Control de Inventario</h1>
-        <Button onClick={() => { setAdjData({ productId: products[0]?.id || '', quantity: 0, reason: 'Rotura' }); setIsAdjModalOpen(true); }} variant="secondary">
-          Ajuste Manual
-        </Button>
+      <div className="flex flex-wrap justify-between items-center gap-4 border-b pb-4">
+        <h1 className="text-2xl font-bold text-gray-900">Movimientos de Stock</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <FiltroFechas from={dateRange.from} to={dateRange.to} onChange={setDateRange} />
+          <Button onClick={() => { setAdjData({ productId: products[0]?.id || '', quantity: 0, reason: 'Rotura' }); setIsAdjModalOpen(true); }} variant="secondary">
+            Ajuste Manual
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -130,7 +138,7 @@ export default function Inventory() {
           <div className="overflow-y-auto max-h-[500px]">
             <table className="min-w-full text-sm">
               <tbody className="text-sm text-gray-600">
-                {movements.slice(0, 50).map(m => ( // Solo los ultimos 50 para ui rapida
+                {filteredMovements.slice(0, 50).map(m => (
                   <tr key={m.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-3">
                       <div className="flex items-center gap-2">
@@ -139,7 +147,7 @@ export default function Inventory() {
                        </div>
                         <span className="font-medium text-gray-800">{getProductName(m.productId)}</span>
                       </div>
-                      <div className="text-[11px] text-gray-500 mt-1 pl-8">{format(new Date(m.date), "dd MMM yyyy HH:mm", { locale: es })} • {m.reason}</div>
+                      <div className="text-[11px] text-gray-500 mt-1 pl-8">{formatFechaHora(m.date)} • {m.reason}</div>
                     </td>
                     <td className="px-6 py-3 text-right font-bold">
                       <span className={m.type === 'entrada' ? 'text-green-600' : m.type === 'salida' ? 'text-red-600' : 'text-amber-600'}>

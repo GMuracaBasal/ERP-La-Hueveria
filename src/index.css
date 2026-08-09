@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
+@import "react-datepicker/dist/react-datepicker.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -134,4 +135,145 @@ body {
 /* Sidebar fijo — no hereda overrides de contenido */
 .dark aside .bg-brand-cream {
   background-color: #F0EBE3 !important;
+}
+
+/* react-datepicker — identidad Basal (terracota #C8703F) */
+.basal-datepicker.react-datepicker {
+  font-family: var(--font-sans);
+  border: 1px solid var(--basal-border);
+  border-radius: 0.75rem;
+  box-shadow: 0 4px 16px rgba(26, 31, 46, 0.12);
+}
+
+.basal-datepicker .react-datepicker__header {
+  background-color: #F0EBE3;
+  border-bottom: 1px solid var(--basal-border);
+  border-radius: 0.75rem 0.75rem 0 0;
+}
+
+.basal-datepicker .react-datepicker__current-month,
+.basal-datepicker .react-datepicker__day-name {
+  color: #1A1F2E;
+  font-weight: 600;
+}
+
+.basal-datepicker .react-datepicker__day--selected,
+.basal-datepicker .react-datepicker__day--keyboard-selected {
+  background-color: #C8703F !important;
+  color: #FFFFFF !important;
+  border-radius: 0.375rem;
+}
+
+.basal-datepicker .react-datepicker__day--selected:hover,
+.basal-datepicker .react-datepicker__day--keyboard-selected:hover {
+  background-color: #b86335 !important;
+}
+
+.basal-datepicker .react-datepicker__day:hover {
+  background-color: rgba(200, 112, 63, 0.15);
+  border-radius: 0.375rem;
+}
+
+.basal-datepicker .react-datepicker__day--today {
+  font-weight: 700;
+  color: #C8703F;
+}
+
+.basal-datepicker .react-datepicker__navigation-icon::before {
+  border-color: #7A8A9A;
+}
+
+.basal-datepicker .react-datepicker__close-icon::after {
+  background-color: #7A8A9A;
+}
+
+/* Impresión — comprobante A4 */
+@page {
+  size: A4;
+  margin: 20mm;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .printable-ticket,
+  .printable-ticket * {
+    visibility: visible;
+  }
+
+  .printable-ticket {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    max-width: 170mm;
+    font-size: 12pt;
+    color: #000;
+  }
+
+  .printable-ticket table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12pt;
+  }
+
+  .printable-ticket th,
+  .printable-ticket td {
+    padding: 6pt 8pt;
+    border-bottom: 1px solid #ccc;
+    text-align: left;
+    max-width: none !important;
+    white-space: normal;
+    overflow: visible;
+  }
+
+  .printable-ticket th:nth-child(2),
+  .printable-ticket td:nth-child(2) {
+    text-align: center;
+  }
+
+  .printable-ticket th:nth-child(3),
+  .printable-ticket td:nth-child(3) {
+    text-align: right;
+  }
+
+  .printable-ticket .print-ticket-header {
+    text-align: center;
+    border-bottom: 1px dashed #999;
+    padding-bottom: 12pt;
+    margin-bottom: 12pt;
+  }
+
+  .printable-ticket .print-ticket-header h2 {
+    font-size: 16pt;
+    font-weight: bold;
+    margin: 0 0 6pt;
+  }
+
+  .printable-ticket .print-total {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-top: 16pt;
+    padding-top: 12pt;
+    border-top: 2px solid #000;
+    font-size: 14pt;
+    font-weight: bold;
+  }
+
+  .printable-ticket .print-voided {
+    display: inline-block;
+    border: 2px solid #c00;
+    color: #c00;
+    font-weight: bold;
+    padding: 4pt 12pt;
+    margin-bottom: 8pt;
+    letter-spacing: 0.1em;
+  }
+
+  .no-print {
+    display: none !important;
+  }
 }

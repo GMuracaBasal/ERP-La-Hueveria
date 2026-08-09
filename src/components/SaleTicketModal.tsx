@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { salesDB } from '../lib/db';
 import { Sale, SaleItem, Product, Customer, PriceList, Settings } from '../types';
 import { Button, Modal, Badge, SearchableSelect, useToast } from '../components/ui';
-import { formatCurrency } from '../lib/utils';
-import { format } from 'date-fns';
+import { formatCurrency, formatFechaHora } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import {
   canModifySale,
@@ -183,64 +182,71 @@ export default function SaleTicketModal({
     <Modal isOpen={!!sale} onClose={onClose} title={title}>
       {mode === 'view' && (
         <div className="space-y-4">
-          <div className="text-center pb-4 border-b border-dashed relative">
-            {isVoided && (
-              <Badge variant="danger" className="mb-2">ANULADO</Badge>
-            )}
-            <h2 className="text-lg font-bold">{settings?.businessName}</h2>
-            <div className="text-sm text-gray-500">Ticket #{sale.id.slice(0, 8).toUpperCase()}</div>
-            <div className="text-sm text-gray-500">
-              {format(new Date(sale.date), 'dd/MM/yyyy HH:mm')}
+          <div className="printable-ticket space-y-4">
+            <div className="text-center pb-4 border-b border-dashed print-ticket-header relative">
+              {isVoided && (
+                <Badge variant="danger" className="mb-2 print-voided">ANULADO</Badge>
+              )}
+              <h2 className="text-lg font-bold">{settings?.businessName}</h2>
+              <div className="text-sm text-gray-500">Ticket #{sale.id.slice(0, 8).toUpperCase()}</div>
+              <div className="text-sm text-gray-500">
+                {formatFechaHora(sale.date)}
+              </div>
             </div>
-          </div>
-          <div className="text-sm">
-            <span className="font-semibold">Cliente:</span>{' '}
-            {sale.customerId
-              ? customers.find((c) => c.id === sale.customerId)?.name
-              : 'Consumidor Final'}
-            <br />
-            <span className="font-semibold">Pago:</span> {sale.paymentMethod}
-          </div>
-          <table className="w-full text-sm text-left font-mono">
-            <thead>
-              <tr className="border-b">
-                <th className="p-1">Desc</th>
-                <th className="p-1 text-center">Cant</th>
-                <th className="p-1 text-right">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sale.items.map((i, idx) => (
-                <tr key={idx}>
-                  <td className="p-1 pr-2 truncate max-w-[200px]">
-                    {products.find((p) => p.id === i.productId)?.name}
-                  </td>
-                  <td className="p-1 text-center">{i.quantity}</td>
-                  <td className="p-1 text-right">{formatCurrency(i.subtotal)}</td>
+            <div className="text-sm">
+              <span className="font-semibold">Cliente:</span>{' '}
+              {sale.customerId
+                ? customers.find((c) => c.id === sale.customerId)?.name
+                : 'Consumidor Final'}
+              <br />
+              <span className="font-semibold">Pago:</span> {sale.paymentMethod}
+            </div>
+            <table className="w-full text-sm text-left font-mono">
+              <thead>
+                <tr className="border-b">
+                  <th className="p-1">Desc</th>
+                  <th className="p-1 text-center">Cant</th>
+                  <th className="p-1 text-right">Total</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="border-t border-dashed pt-4 flex justify-between items-end font-bold text-lg">
-            <span>TOTAL</span>
-            <span className={isVoided ? 'line-through text-gray-400' : ''}>
-              {formatCurrency(sale.total)}
-            </span>
+              </thead>
+              <tbody>
+                {sale.items.map((i, idx) => (
+                  <tr key={idx}>
+                    <td className="p-1 pr-2 truncate max-w-[200px]">
+                      {products.find((p) => p.id === i.productId)?.name}
+                    </td>
+                    <td className="p-1 text-center">{i.quantity}</td>
+                    <td className="p-1 text-right">{formatCurrency(i.subtotal)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="border-t border-dashed pt-4 flex justify-between items-end font-bold text-lg print-total">
+              <span>TOTAL</span>
+              <span className={isVoided ? 'line-through text-gray-400' : ''}>
+                {formatCurrency(sale.total)}
+              </span>
+            </div>
           </div>
 
-          {!isVoided && canModify && (
-            <div className="flex justify-end gap-2 pt-4 border-t">
-              <Button variant="secondary" onClick={() => setMode('edit')}>Editar</Button>
-              <Button variant="danger" onClick={() => setMode('void')}>Anular</Button>
-            </div>
-          )}
+          <div className="flex justify-end gap-2 pt-4 border-t no-print">
+            <Button variant="secondary" onClick={() => window.print()}>
+              Imprimir
+            </Button>
+            {!isVoided && canModify && (
+              <>
+                <Button variant="secondary" onClick={() => setMode('edit')}>Editar</Button>
+                <Button variant="danger" onClick={() => setMode('void')}>Anular</Button>
+              </>
+            )}
+          </div>
           {!isVoided && !canModify && isMostradorContadoSale(sale) && user?.role === 'vendedor' && (
-            <p className="text-xs text-brand-muted italic pt-2">
+            <p className="text-xs text-brand-muted italic pt-2 no-print">
               Solo un administrador puede modificar ventas de cajas ya cerradas.
             </p>
           )}
           {!isVoided && !isMostradorContadoSale(sale) && (
-            <p className="text-xs text-brand-muted italic pt-2">
+            <p className="text-xs text-brand-muted italic pt-2 no-print">
               Las ventas en Cuenta Corriente no pueden modificarse en esta etapa.
             </p>
           )}
@@ -248,7 +254,7 @@ export default function SaleTicketModal({
       )}
 
       {mode === 'edit' && (
-        <form onSubmit={handleEditSave} className="space-y-4">
+        <form onSubmit={handleEditSave} className="space-y-4 no-print">
           {!posStyle && (
             <div>
               <label className="block text-sm mb-1">Cliente</label>
@@ -370,7 +376,7 @@ export default function SaleTicketModal({
       )}
 
       {mode === 'void' && (
-        <div className="space-y-4">
+        <div className="space-y-4 no-print">
           <p className="text-sm text-brand-muted">
             Esta acción revertirá el stock y el ingreso en caja. No se puede deshacer.
           </p>

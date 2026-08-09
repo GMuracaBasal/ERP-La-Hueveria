@@ -7,7 +7,7 @@ import { canAccess, firstAllowedPath } from './lib/modules';
 import Login from './pages/Login';
 import Layout from './components/Layout';
 
-import Dashboard from './pages/Dashboard';
+import ModuleDashboard from './pages/ModuleDashboard';
 import Products from './pages/Products';
 import Inventory from './pages/Inventory';
 import Customers from './pages/Customers';
@@ -16,12 +16,11 @@ import PriceLists from './pages/PriceLists';
 import Purchases from './pages/Purchases';
 import Suppliers from './pages/Suppliers';
 import Users from './pages/Users';
-import POS from './pages/POS';
-import Caja from './pages/Caja';
+import PuntoDeVenta from './pages/PuntoDeVenta';
 
 function ProtectedRoute(
-  { children, reqRole, moduleId }:
-  { children: ReactElement; reqRole?: 'admin'; moduleId?: string }
+  { children, reqRole, sectionId }:
+  { children: ReactElement; reqRole?: 'admin'; sectionId?: string }
 ) {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
@@ -29,13 +28,12 @@ function ProtectedRoute(
   if (reqRole && user.role !== reqRole) {
     return <Navigate to={firstAllowedPath(user)} replace />;
   }
-  if (moduleId && !canAccess(user, moduleId)) {
+  if (sectionId && !canAccess(user, sectionId)) {
     return <Navigate to={firstAllowedPath(user)} replace />;
   }
   return children;
 }
 
-// App configuration wrapper checking setup status
 function AppLogic() {
   const [loading, setLoading] = useState(true);
 
@@ -46,24 +44,43 @@ function AppLogic() {
     })();
   }, []);
 
-  if (loading) return <div className="h-screen w-screen flex items-center justify-center bg-brand-cream font-bold text-brand-brown">Iniciando La Hueveria...</div>;
+  if (loading) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-brand-cream font-bold text-brand-brown">
+        Iniciando La Hueveria...
+      </div>
+    );
+  }
 
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-        <Route path="/"               element={<ProtectedRoute moduleId="inicio"><Dashboard /></ProtectedRoute>} />
-        <Route path="/ventas"         element={<ProtectedRoute moduleId="ventas"><Sales /></ProtectedRoute>} />
-        <Route path="/productos"      element={<ProtectedRoute moduleId="productos"><Products /></ProtectedRoute>} />
-        <Route path="/inventario"     element={<ProtectedRoute moduleId="inventario"><Inventory /></ProtectedRoute>} />
-        <Route path="/clientes"       element={<ProtectedRoute moduleId="clientes"><Customers /></ProtectedRoute>} />
-        <Route path="/listas-precios" element={<ProtectedRoute moduleId="listas-precios"><PriceLists /></ProtectedRoute>} />
-        <Route path="/compras"        element={<ProtectedRoute moduleId="compras"><Purchases /></ProtectedRoute>} />
-        <Route path="/proveedores"    element={<ProtectedRoute moduleId="proveedores"><Suppliers /></ProtectedRoute>} />
-        <Route path="/finanzas"       element={<ProtectedRoute moduleId="finanzas"><Dashboard /></ProtectedRoute>} />
-        <Route path="/pos"            element={<ProtectedRoute moduleId="pos"><POS /></ProtectedRoute>} />
-        <Route path="/caja"           element={<ProtectedRoute moduleId="caja"><Caja /></ProtectedRoute>} />
-        <Route path="/usuarios"       element={<ProtectedRoute reqRole="admin"><Users /></ProtectedRoute>} />
+        {/* Inicio */}
+        <Route path="/" element={<ProtectedRoute sectionId="inicio"><ModuleDashboard title="Inicio" /></ProtectedRoute>} />
+
+        {/* Inventario */}
+        <Route path="/inventario" element={<ProtectedRoute sectionId="inventario-dashboard"><ModuleDashboard title="Inventario" /></ProtectedRoute>} />
+        <Route path="/inventario/productos" element={<ProtectedRoute sectionId="inventario-productos"><Products /></ProtectedRoute>} />
+        <Route path="/inventario/movimientos" element={<ProtectedRoute sectionId="inventario-movimientos"><Inventory /></ProtectedRoute>} />
+
+        {/* Ingresos */}
+        <Route path="/ingresos" element={<ProtectedRoute sectionId="ingresos-dashboard"><ModuleDashboard title="Ingresos" /></ProtectedRoute>} />
+        <Route path="/ingresos/ventas" element={<ProtectedRoute sectionId="ingresos-ventas"><Sales /></ProtectedRoute>} />
+        <Route path="/ingresos/punto-de-venta" element={<ProtectedRoute sectionId="ingresos-punto-de-venta"><PuntoDeVenta /></ProtectedRoute>} />
+        <Route path="/ingresos/listas-precios" element={<ProtectedRoute sectionId="ingresos-listas-precios"><PriceLists /></ProtectedRoute>} />
+        <Route path="/ingresos/clientes" element={<ProtectedRoute sectionId="ingresos-clientes"><Customers /></ProtectedRoute>} />
+
+        {/* Egresos */}
+        <Route path="/egresos" element={<ProtectedRoute sectionId="egresos-dashboard"><ModuleDashboard title="Egresos" /></ProtectedRoute>} />
+        <Route path="/egresos/compras" element={<ProtectedRoute sectionId="egresos-compras"><Purchases /></ProtectedRoute>} />
+        <Route path="/egresos/proveedores" element={<ProtectedRoute sectionId="egresos-proveedores"><Suppliers /></ProtectedRoute>} />
+
+        {/* Finanzas */}
+        <Route path="/finanzas" element={<ProtectedRoute sectionId="finanzas-dashboard"><ModuleDashboard title="Finanzas" /></ProtectedRoute>} />
+
+        {/* Usuarios (solo admin) */}
+        <Route path="/usuarios" element={<ProtectedRoute reqRole="admin"><Users /></ProtectedRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -4,7 +4,12 @@ import { usersDB } from '../lib/db';
 import { User, Role } from '../types';
 import { Button, Modal, Badge, SearchableSelect, AntiAutofillInput, useConfirm, useToast } from '../components/ui';
 import { hashPassword, generateId } from '../lib/utils';
-import { MODULES } from '../lib/modules';
+import {
+  assignableModules,
+  DEFAULT_VENDOR_SECTIONS,
+  getSectionLabel,
+  normalizeSectionIds,
+} from '../lib/modules';
 import { useAuth } from '../contexts/AuthContext';
 
 const emptyForm = {
@@ -13,7 +18,7 @@ const emptyForm = {
   email: '',
   password: '',
   role: 'vendedor' as Role,
-  modules: ['pos', 'caja'] as string[],
+  modules: [...DEFAULT_VENDOR_SECTIONS] as string[],
 };
 
 export default function Users() {
@@ -31,17 +36,20 @@ export default function Users() {
   const handleOpenModal = (user?: User) => {
     if (user) {
       setEditingUser(user);
+      const sections = user.modules?.length
+        ? normalizeSectionIds(user.modules)
+        : (user.role === 'vendedor' ? [...DEFAULT_VENDOR_SECTIONS] : []);
       setFormData({
         fullName: user.fullName,
         username: user.username,
         email: user.email || '',
         password: '',
         role: user.role,
-        modules: user.modules?.length ? [...user.modules] : (user.role === 'vendedor' ? ['pos', 'caja'] : []),
+        modules: sections,
       });
     } else {
       setEditingUser(null);
-      setFormData({ ...emptyForm, modules: ['pos', 'caja'] });
+      setFormData({ ...emptyForm, modules: [...DEFAULT_VENDOR_SECTIONS] });
     }
     setIsModalOpen(true);
   };
@@ -52,12 +60,12 @@ export default function Users() {
     setFormData(emptyForm);
   };
 
-  const toggleModule = (moduleId: string) => {
+  const toggleSection = (sectionId: string) => {
     setFormData((prev) => ({
       ...prev,
-      modules: prev.modules.includes(moduleId)
-        ? prev.modules.filter((id) => id !== moduleId)
-        : [...prev.modules, moduleId],
+      modules: prev.modules.includes(sectionId)
+        ? prev.modules.filter((id) => id !== sectionId)
+        : [...prev.modules, sectionId],
     }));
   };
 
@@ -81,12 +89,12 @@ export default function Users() {
       return;
     }
     if (formData.role === 'vendedor' && formData.modules.length === 0) {
-      toast.error('Seleccioná al menos un módulo para el vendedor.');
+      toast.error('Seleccioná al menos una sección para el vendedor.');
       return;
     }
 
     try {
-      const modules = formData.role === 'admin' ? [] : formData.modules;
+      const modules = formData.role === 'admin' ? [] : normalizeSectionIds(formData.modules);
 
       if (editingUser) {
         const updatedUser: User = {
@@ -151,8 +159,6 @@ export default function Users() {
     }
   };
 
-  const moduleLabel = (id: string) => MODULES.find((m) => m.id === id)?.label ?? id;
-
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center border-b pb-4">
@@ -175,7 +181,7 @@ export default function Users() {
                 <th className="px-6 py-3 text-left">Usuario</th>
                 <th className="px-6 py-3 text-left">Email</th>
                 <th className="px-6 py-3 text-left">Rol</th>
-                <th className="px-6 py-3 text-left">Módulos</th>
+                <th className="px-6 py-3 text-left">Secciones</th>
                 <th className="px-6 py-3 text-left">Estado</th>
                 <th className="px-6 py-3 text-right">Acciones</th>
               </tr>
@@ -199,21 +205,21 @@ export default function Users() {
                   <td className="px-6 py-3">
                     {u.role === 'admin' ? (
                       <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-brand-durazno/40 text-brand-navy">
-                        Todos
+                        Todas
                       </span>
                     ) : u.modules?.length ? (
                       <div className="flex flex-wrap gap-1">
-                        {u.modules.map((id) => (
+                        {normalizeSectionIds(u.modules).map((id) => (
                           <span
                             key={id}
                             className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 text-gray-600"
                           >
-                            {moduleLabel(id)}
+                            {getSectionLabel(id)}
                           </span>
                         ))}
                       </div>
                     ) : (
-                      <span className="text-xs text-gray-400">Sin módulos</span>
+                      <span className="text-xs text-gray-400">Sin secciones</span>
                     )}
                   </td>
                   <td className="px-6 py-3">
@@ -314,13 +320,13 @@ export default function Users() {
                 { value: 'admin', label: 'Administrador' },
               ]}
               value={{ value: formData.role, label: formData.role === 'admin' ? 'Administrador' : 'Vendedor' }}
-              onChange={(selected: any) => {
+              onChange={(selected: { value: string } | null) => {
                 const role = (selected?.value as Role) || 'vendedor';
                 setFormData({
                   ...formData,
                   role,
                   modules: role === 'vendedor' && formData.modules.length === 0
-                    ? ['pos', 'caja']
+                    ? [...DEFAULT_VENDOR_SECTIONS]
                     : formData.modules,
                 });
               }}
@@ -329,24 +335,33 @@ export default function Users() {
 
           {formData.role === 'vendedor' ? (
             <div>
-              <label className="block text-sm mb-2">Módulos habilitados</label>
-              <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-brand-border rounded-lg p-3 bg-brand-cream/20">
-                {MODULES.map((m) => (
-                  <label key={m.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={formData.modules.includes(m.id)}
-                      onChange={() => toggleModule(m.id)}
-                      className="rounded border-brand-border text-brand-teja focus:ring-brand-teja"
-                    />
-                    {m.label}
-                  </label>
+              <label className="block text-sm mb-2">Secciones habilitadas</label>
+              <div className="max-h-64 overflow-y-auto border border-brand-border rounded-lg p-3 bg-brand-cream/20 space-y-4">
+                {assignableModules().map((mod) => (
+                  <div key={mod.id}>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-brand-muted mb-2">
+                      {mod.label}
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {mod.sections.map((section) => (
+                        <label key={section.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={formData.modules.includes(section.id)}
+                            onChange={() => toggleSection(section.id)}
+                            className="rounded border-brand-border text-brand-teja focus:ring-brand-teja"
+                          />
+                          {section.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
           ) : (
             <p className="text-sm text-gray-500 bg-brand-cream/40 border border-brand-border rounded-lg p-3">
-              Los administradores acceden a todos los módulos.
+              Los administradores acceden a todos los módulos y secciones.
             </p>
           )}
 
