@@ -118,6 +118,28 @@ export interface FinanceMovement {
   voided?: boolean;
 }
 
+export type AccountReferenceType = 'venta' | 'compra' | 'cobro' | 'pago' | 'ajuste';
+
+export type AccountPartyType = 'customer' | 'supplier';
+
+/** Movimiento del libro de cuenta corriente (cliente o proveedor). */
+export interface AccountMovement {
+  id: string;
+  date: string;
+  customerId: string | null;
+  supplierId: string | null;
+  concept: string;
+  debe: number;
+  haber: number;
+  referenceType: AccountReferenceType;
+  referenceId: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  voided: boolean;
+  voidedAt: string | null;
+  voidedBy: string | null;
+}
+
 export interface Settings {
   businessName: string;
   defaultPriceListId: string | null;

@@ -2,7 +2,8 @@ import { supabase } from './supabase';
 import { generateId } from './utils';
 import {
   User, Product, PriceList, Supplier, Customer,
-  Purchase, Sale, InventoryMovement, FinanceMovement, Settings
+  Purchase, Sale, InventoryMovement, FinanceMovement, Settings,
+  AccountMovement,
 } from '../types';
 
 // ─── Helpers de mapeo (snake_case en DB ↔ camelCase en TS) ───────────
@@ -64,6 +65,49 @@ const mapFinanceToDB = (m: FinanceMovement) => ({
 });
 
 const mapSupplierToDB = (s: Supplier) => ({ ...s });
+
+const mapAccountMovementFromDB = (r: any): AccountMovement => ({
+  id: r.id,
+  date: r.date,
+  customerId: r.customer_id ?? null,
+  supplierId: r.supplier_id ?? null,
+  concept: r.concept,
+  debe: Number(r.debe),
+  haber: Number(r.haber),
+  referenceType: r.reference_type,
+  referenceId: r.reference_id ?? null,
+  createdBy: r.created_by ?? null,
+  createdAt: r.created_at,
+  voided: r.voided ?? false,
+  voidedAt: r.voided_at ?? null,
+  voidedBy: r.voided_by ?? null,
+});
+
+const mapAccountMovementToDB = (m: AccountMovement) => ({
+  id: m.id,
+  date: m.date,
+  customer_id: m.customerId,
+  supplier_id: m.supplierId,
+  concept: m.concept,
+  debe: m.debe,
+  haber: m.haber,
+  reference_type: m.referenceType,
+  reference_id: m.referenceId,
+  created_by: m.createdBy,
+  created_at: m.createdAt,
+  voided: m.voided,
+  voided_at: m.voidedAt,
+  voided_by: m.voidedBy,
+});
+
+/** Orden estable del saldo corrido: date → created_at → id. */
+function orderAccountMovements(a: AccountMovement, b: AccountMovement): number {
+  const byDate = a.date.localeCompare(b.date);
+  if (byDate !== 0) return byDate;
+  const byCreated = a.createdAt.localeCompare(b.createdAt);
+  if (byCreated !== 0) return byCreated;
+  return a.id.localeCompare(b.id);
+}
 
 // ─── CRUD genérico (entidades simples sin tablas hijas) ──────────────
 
@@ -466,6 +510,62 @@ export const salesDB = {
       performedBy: userId,
       snapshot,
     });
+  },
+};
+
+// ─── Cuentas corrientes (libro inmutable; corrección = anular + nuevo) ─
+
+export const accountMovementsDB = {
+  /** Movimientos del cliente (incluye anulados para el libro). */
+  async getByCustomer(customerId: string): Promise<AccountMovement[]> {
+    const { data, error } = await supabase
+      .from('account_movements')
+      .select('*')
+      .eq('customer_id', customerId);
+    if (error) throw error;
+    return (data ?? []).map(mapAccountMovementFromDB).sort(orderAccountMovements);
+  },
+
+  /** Movimientos del proveedor (incluye anulados para el libro). */
+  async getBySupplier(supplierId: string): Promise<AccountMovement[]> {
+    const { data, error } = await supabase
+      .from('account_movements')
+      .select('*')
+      .eq('supplier_id', supplierId);
+    if (error) throw error;
+    return (data ?? []).map(mapAccountMovementFromDB).sort(orderAccountMovements);
+  },
+
+  /** Solo vigentes (voided=false), para armar saldos de listados. */
+  async getAllActive(): Promise<AccountMovement[]> {
+    const { data, error } = await supabase
+      .from('account_movements')
+      .select('*')
+      .eq('voided', false);
+    if (error) throw error;
+    return (data ?? []).map(mapAccountMovementFromDB).sort(orderAccountMovements);
+  },
+
+  /** Inserta un movimiento nuevo. Nunca actualizar debe/haber de uno existente. */
+  async save(movement: AccountMovement): Promise<void> {
+    const { error } = await supabase
+      .from('account_movements')
+      .insert(mapAccountMovementToDB(movement));
+    if (error) throw error;
+  },
+
+  /** Anulación lógica: no borra ni edita debe/haber. */
+  async void(id: string, voidedBy: string): Promise<void> {
+    const { error } = await supabase
+      .from('account_movements')
+      .update({
+        voided: true,
+        voided_at: new Date().toISOString(),
+        voided_by: voidedBy,
+      })
+      .eq('id', id)
+      .eq('voided', false);
+    if (error) throw error;
   },
 };
 

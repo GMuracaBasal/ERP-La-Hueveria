@@ -1,27 +1,78 @@
-import React, { useState, useEffect } from 'react';
-import { suppliersDB } from '../lib/db';
-import { Supplier } from '../types';
+import React, { useEffect, useState } from 'react';
+import { accountMovementsDB, suppliersDB } from '../lib/db';
+import { AccountMovement, Supplier } from '../types';
 import { Button, ActionButtons, Modal, useConfirm, useToast } from '../components/ui';
-import { generateId } from '../lib/utils';
+import { formatCurrency, generateId } from '../lib/utils';
+import { balancesByParty } from '../lib/accountMovements';
+import CuentaCorriente from '../components/CuentaCorriente';
+import RegistrarMovimientoModal from '../components/RegistrarMovimientoModal';
+
+const emptyForm = { name: '', phone: '', email: '', address: '', notes: '' };
 
 export default function Suppliers() {
   const { confirm } = useConfirm();
   const { toast } = useToast();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [balances, setBalances] = useState<Map<string, number>>(new Map());
+  const [selected, setSelected] = useState<Supplier | null>(null);
+  const [movements, setMovements] = useState<AccountMovement[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editing, setEditing] = useState<Supplier | null>(null);
-  const [formData, setFormData] = useState({ name: '', phone: '', email: '', address: '', notes: '' });
+  const [movModalOpen, setMovModalOpen] = useState(false);
+  const [formData, setFormData] = useState(emptyForm);
 
-  const load = async () => setSuppliers(await suppliersDB.getAll());
-  useEffect(() => { load(); }, []);
+  const loadList = async () => {
+    try {
+      const [list, activeMovs] = await Promise.all([
+        suppliersDB.getAll(),
+        accountMovementsDB.getAllActive(),
+      ]);
+      setSuppliers(list);
+      setBalances(balancesByParty(activeMovs, 'supplier'));
+    } catch {
+      toast.error('No se pudieron cargar los proveedores.');
+    }
+  };
+
+  const loadBook = async (supplierId: string) => {
+    try {
+      setMovements(await accountMovementsDB.getBySupplier(supplierId));
+    } catch {
+      toast.error('No se pudo cargar la cuenta corriente.');
+    }
+  };
+
+  useEffect(() => {
+    loadList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const openDetail = async (supplier: Supplier) => {
+    setSelected(supplier);
+    await loadBook(supplier.id);
+  };
+
+  const refreshDetail = async () => {
+    if (!selected) return;
+    const fresh = await suppliersDB.getById(selected.id);
+    if (fresh) setSelected(fresh);
+    await loadBook(selected.id);
+    await loadList();
+  };
 
   const handleOpenModal = (item?: Supplier) => {
     if (item) {
       setEditing(item);
-      setFormData(item);
+      setFormData({
+        name: item.name,
+        phone: item.phone,
+        email: item.email,
+        address: item.address,
+        notes: item.notes,
+      });
     } else {
       setEditing(null);
-      setFormData({ name: '', phone: '', email: '', address: '', notes: '' });
+      setFormData(emptyForm);
     }
     setIsModalOpen(true);
   };
@@ -30,13 +81,15 @@ export default function Suppliers() {
     e.preventDefault();
     try {
       if (editing) {
-        await suppliersDB.save({ ...editing, ...formData });
+        const updated = { ...editing, ...formData };
+        await suppliersDB.save(updated);
+        if (selected?.id === editing.id) setSelected(updated);
       } else {
         await suppliersDB.save({ id: generateId(), ...formData });
       }
       toast.success(editing ? 'Proveedor actualizado correctamente.' : 'Proveedor creado correctamente.');
       setIsModalOpen(false);
-      load();
+      await loadList();
     } catch {
       toast.error('No se pudo completar la operación. Intentá de nuevo.');
     }
@@ -48,16 +101,152 @@ export default function Suppliers() {
       description: 'Esta acción no se puede deshacer.',
       confirmLabel: 'Sí, eliminar',
     });
-    if (ok) {
-      try {
-        await suppliersDB.delete(id);
-        toast.success('Proveedor eliminado correctamente.');
-        load();
-      } catch {
-        toast.error('No se pudo completar la operación. Intentá de nuevo.');
+    if (!ok) return;
+    try {
+      await suppliersDB.delete(id);
+      toast.success('Proveedor eliminado correctamente.');
+      if (selected?.id === id) {
+        setSelected(null);
+        setMovements([]);
       }
+      await loadList();
+    } catch {
+      toast.error('No se pudo completar la operación. Intentá de nuevo.');
     }
   };
+
+  const supplierForm = (
+    <form onSubmit={handleSave} className="space-y-4">
+      <div>
+        <label className="block text-sm">Razón Social</label>
+        <input
+          required
+          className="w-full border p-2 rounded"
+          value={formData.name}
+          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm">Teléfono</label>
+          <input
+            className="w-full border p-2 rounded"
+            value={formData.phone}
+            onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+          />
+        </div>
+        <div>
+          <label className="block text-sm">Email</label>
+          <input
+            type="email"
+            className="w-full border p-2 rounded"
+            value={formData.email}
+            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+          />
+        </div>
+      </div>
+      <div>
+        <label className="block text-sm">Dirección</label>
+        <input
+          className="w-full border p-2 rounded"
+          value={formData.address}
+          onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+        />
+      </div>
+      <div>
+        <label className="block text-sm">Notas</label>
+        <textarea
+          className="w-full border p-2 rounded"
+          value={formData.notes}
+          onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+        />
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <Button variant="secondary" type="button" onClick={() => setIsModalOpen(false)}>
+          Cancelar
+        </Button>
+        <Button type="submit">Guardar</Button>
+      </div>
+    </form>
+  );
+
+  if (selected) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              setSelected(null);
+              setMovements([]);
+              loadList();
+            }}
+            className="text-sm text-brand-muted hover:text-brand-brown mb-1"
+          >
+            ← Volver al listado
+          </button>
+          <h1 className="text-2xl font-bold text-gray-900">{selected.name}</h1>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-sm border border-brand-border overflow-hidden">
+          <div className="px-6 py-4 border-b border-brand-border flex flex-wrap justify-between items-center gap-3 bg-brand-cream/30">
+            <h2 className="font-bold text-brand-brown flex items-center gap-2">
+              <span className="w-2 h-4 bg-brand-orange rounded-full" />
+              Datos del proveedor
+            </h2>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => handleOpenModal(selected)}>
+                Editar
+              </Button>
+              <Button variant="danger" onClick={() => handleDelete(selected.id)}>
+                Eliminar
+              </Button>
+            </div>
+          </div>
+          <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+            <div>
+              <div className="text-xs text-brand-muted uppercase font-bold">Teléfono</div>
+              <div className="text-gray-800">{selected.phone || '—'}</div>
+            </div>
+            <div>
+              <div className="text-xs text-brand-muted uppercase font-bold">Email</div>
+              <div className="text-gray-800">{selected.email || '—'}</div>
+            </div>
+            <div>
+              <div className="text-xs text-brand-muted uppercase font-bold">Dirección</div>
+              <div className="text-gray-800">{selected.address || '—'}</div>
+            </div>
+            {selected.notes ? (
+              <div className="sm:col-span-2">
+                <div className="text-xs text-brand-muted uppercase font-bold">Notas</div>
+                <div className="text-gray-800 whitespace-pre-wrap">{selected.notes}</div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <CuentaCorriente
+          movements={movements}
+          partyType="supplier"
+          onChanged={refreshDetail}
+          onRegistrar={() => setMovModalOpen(true)}
+        />
+
+        <RegistrarMovimientoModal
+          isOpen={movModalOpen}
+          onClose={() => setMovModalOpen(false)}
+          onSaved={refreshDetail}
+          partyType="supplier"
+          partyId={selected.id}
+          partyName={selected.name}
+        />
+
+        <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Editar Proveedor">
+          {supplierForm}
+        </Modal>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -69,7 +258,7 @@ export default function Suppliers() {
       <div className="bg-white rounded-2xl shadow-sm border border-brand-border flex flex-col overflow-hidden">
         <div className="px-6 py-4 border-b border-brand-border flex justify-between items-center bg-brand-cream/30">
           <h2 className="font-bold text-brand-brown flex items-center gap-2">
-            <span className="w-2 h-4 bg-brand-orange rounded-full"></span>
+            <span className="w-2 h-4 bg-brand-orange rounded-full" />
             Directorio de Proveedores
           </h2>
         </div>
@@ -80,20 +269,33 @@ export default function Suppliers() {
                 <th className="px-6 py-3 text-left">Razón Social</th>
                 <th className="px-6 py-3 text-left">Contacto</th>
                 <th className="px-6 py-3 text-left">Dirección</th>
+                <th className="px-6 py-3 text-right">Saldo</th>
                 <th className="px-6 py-3 text-right">Acciones</th>
               </tr>
             </thead>
             <tbody className="text-sm text-gray-600">
-              {suppliers.map(s => (
-                <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+              {suppliers.map((s) => (
+                <tr
+                  key={s.id}
+                  className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer"
+                  onClick={() => openDetail(s)}
+                >
                   <td className="px-6 py-3 font-medium text-gray-800">{s.name}</td>
                   <td className="px-6 py-3">
                     <div className="text-gray-800">{s.phone}</div>
                     <div className="text-xs text-gray-500">{s.email}</div>
                   </td>
                   <td className="px-6 py-3 text-gray-500">{s.address}</td>
-                  <td className="px-6 py-3 text-right">
-                    <div className="flex justify-end"><ActionButtons onEdit={() => handleOpenModal(s)} onDelete={() => handleDelete(s.id)} /></div>
+                  <td className="px-6 py-3 text-right font-mono font-medium text-gray-800">
+                    {formatCurrency(balances.get(s.id) ?? 0)}
+                  </td>
+                  <td className="px-6 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end">
+                      <ActionButtons
+                        onEdit={() => handleOpenModal(s)}
+                        onDelete={() => handleDelete(s.id)}
+                      />
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -102,17 +304,12 @@ export default function Suppliers() {
         </div>
       </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editing ? 'Editar Proveedor' : 'Nuevo Proveedor'}>
-        <form onSubmit={handleSave} className="space-y-4">
-          <div><label className="block text-sm">Razón Social</label><input required className="w-full border p-2 rounded" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
-          <div className="grid grid-cols-2 gap-4">
-            <div><label className="block text-sm">Teléfono</label><input className="w-full border p-2 rounded" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} /></div>
-            <div><label className="block text-sm">Email</label><input type="email" className="w-full border p-2 rounded" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} /></div>
-          </div>
-          <div><label className="block text-sm">Dirección</label><input className="w-full border p-2 rounded" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} /></div>
-          <div><label className="block text-sm">Notas</label><textarea className="w-full border p-2 rounded" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} /></div>
-          <div className="flex justify-end gap-2 mt-4"><Button variant="secondary" type="button" onClick={() => setIsModalOpen(false)}>Cancelar</Button><Button type="submit">Guardar</Button></div>
-        </form>
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={editing ? 'Editar Proveedor' : 'Nuevo Proveedor'}
+      >
+        {supplierForm}
       </Modal>
     </div>
   );

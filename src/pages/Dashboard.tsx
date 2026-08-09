@@ -1,45 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { financeDB } from '../lib/db';
 import { FinanceMovement } from '../types';
-import { Button, Modal, Badge, SearchableSelect } from '../components/ui';
-import { generateId, formatCurrency } from '../lib/utils';
+import { Badge } from '../components/ui';
+import { formatCurrency } from '../lib/utils';
 import { format, isToday, isThisWeek, isThisMonth, parseISO } from 'date-fns';
-import { es } from 'date-fns/locale';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 
 export default function Dashboard() {
   const [movements, setMovements] = useState<FinanceMovement[]>([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [formData, setFormData] = useState({ type: 'egreso', concept: '', amount: 0, paymentMethod: 'Efectivo' });
 
   const load = async () => {
     const movs = await financeDB.getAll();
-    setMovements(movs.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+    setMovements(movs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
   };
   useEffect(() => { load(); }, []);
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if(formData.amount <= 0) return alert('El monto debe ser mayor a 0');
-    
-    await financeDB.save({
-      id: generateId(),
-      date: new Date().toISOString(),
-      type: formData.type as 'ingreso'|'egreso',
-      concept: formData.concept,
-      amount: formData.amount,
-      paymentMethod: formData.type === 'ingreso' ? formData.paymentMethod : undefined
-    });
-    
-    setIsModalOpen(false);
-    load();
-  };
 
   // Metricas
   const calcs = (filterFn: (d: Date) => boolean) => {
     const fnc = movements.filter(m => filterFn(parseISO(m.date)));
-    const ing = fnc.filter(m => m.type === 'ingreso').reduce((a,c)=>a+c.amount,0);
-    const egr = fnc.filter(m => m.type === 'egreso').reduce((a,c)=>a+c.amount,0);
+    const ing = fnc.filter(m => m.type === 'ingreso').reduce((a, c) => a + c.amount, 0);
+    const egr = fnc.filter(m => m.type === 'egreso').reduce((a, c) => a + c.amount, 0);
     return { ing, egr, net: ing - egr };
   };
 
@@ -55,16 +35,13 @@ export default function Dashboard() {
       acc[pm] = (acc[pm] || 0) + curr.amount;
       return acc;
     }, {} as Record<string, number>);
-  const pieData = Object.keys(methodsChart).map(name => ({name, value: methodsChart[name]}));
+  const pieData = Object.keys(methodsChart).map(name => ({ name, value: methodsChart[name] }));
   const pieColors = ['#10B981', '#3B82F6', '#F59E0B', '#8B5CF6', '#EF4444'];
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center border-b pb-4">
         <h1 className="text-2xl font-bold text-gray-900">Dashboard & Finanzas</h1>
-        <Button onClick={() => { setFormData({ type: 'egreso', concept: '', amount: 0, paymentMethod: 'Efectivo' }); setIsModalOpen(true); }}>
-          Registrar Movimiento Manual
-        </Button>
       </div>
 
       {/* Tarjetas Resumen */}
@@ -146,45 +123,12 @@ export default function Dashboard() {
             )}
           </div>
           <div className="px-4 pb-4 space-y-1">
-            {pieData.map((d,i) => (
+            {pieData.map((d, i) => (
                <div key={d.name} className="flex justify-between text-sm"><span className="flex items-center"><span className="w-3 h-3 rounded-full mr-2" style={{backgroundColor: pieColors[i % pieColors.length]}}/>{d.name}</span><span className="font-medium text-gray-900">{formatCurrency(d.value)}</span></div>
             ))}
           </div>
         </div>
       </div>
-
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Movimiento de Caja Manual">
-        <form onSubmit={handleSave} className="space-y-4">
-          <div><label className="block text-sm mb-1">Tipo de Movimiento</label>
-            <SearchableSelect 
-              options={[
-                { value: 'egreso', label: 'Egreso (Salida de dinero)' },
-                { value: 'ingreso', label: 'Ingreso (Entrada de dinero)' }
-              ]}
-              value={{ value: formData.type, label: formData.type === 'egreso' ? 'Egreso (Salida de dinero)' : 'Ingreso (Entrada de dinero)' }}
-              onChange={(selected: any) => setFormData({...formData, type: selected?.value || 'egreso'})}
-            />
-          </div>
-          <div><label className="block text-sm mb-1">Concepto / Motivo</label><input required placeholder="Ej: Pago de luz, Retiro de socios..." className="w-full border p-2 rounded-lg" value={formData.concept} onChange={e => setFormData({...formData, concept: e.target.value})} /></div>
-          <div><label className="block text-sm mb-1">Monto ($)</label><input type="number" required min="0.01" step="0.01" className="w-full border p-2 rounded-lg" value={formData.amount} onChange={e => setFormData({...formData, amount: Number(e.target.value)})} /></div>
-          
-          {formData.type === 'ingreso' && (
-            <div><label className="block text-sm mb-1">Medio de Pago</label>
-              <SearchableSelect 
-                options={[
-                  { value: 'Efectivo', label: 'Efectivo' },
-                  { value: 'Transferencia', label: 'Transferencia' },
-                  { value: 'Otros', label: 'Otros' }
-                ]}
-                value={{ value: formData.paymentMethod, label: formData.paymentMethod }}
-                onChange={(selected: any) => setFormData({...formData, paymentMethod: selected?.value || 'Efectivo'})}
-              />
-            </div>
-          )}
-
-          <div className="flex justify-end gap-2 mt-4"><Button variant="secondary" type="button" onClick={() => setIsModalOpen(false)}>Cancelar</Button><Button type="submit">Registrar</Button></div>
-        </form>
-      </Modal>
     </div>
   );
 }

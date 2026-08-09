@@ -5,7 +5,7 @@ import { cn } from '../lib/utils';
 import {
   Home, Package, DollarSign, Truck, Users,
   ShoppingCart, FileText, Activity, PieChart,
-  Menu, Egg, Sun, Moon
+  Menu, Egg, Sun, Moon,
 } from 'lucide-react';
 import { db } from '../lib/db';
 import { Settings } from '../types';
