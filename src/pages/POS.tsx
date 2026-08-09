@@ -6,6 +6,7 @@ import { generateId, formatCurrency } from '../lib/utils';
 import { getConsumidorFinalId } from '../lib/consumidorFinal';
 import { getSaleRpcErrorMessage } from '../lib/salePermissions';
 import { useAuth } from '../contexts/AuthContext';
+import { type PaymentMethodCode } from '../lib/paymentMethods';
 
 export default function POS() {
   const { user } = useAuth();
@@ -14,7 +15,7 @@ export default function POS() {
   const [defaultList, setDefaultList] = useState<PriceList | null>(null);
   const [search, setSearch] = useState('');
   const [cartItems, setCartItems] = useState<SaleItem[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<'Efectivo' | 'QR / Transferencia'>('Efectivo');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodCode>('efectivo');
   const [cashReceived, setCashReceived] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<{total: number, change: number | null} | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -102,7 +103,7 @@ export default function POS() {
   const handleSaveSale = async () => {
     if (cartItems.length === 0 || !user || submitting) return;
 
-    if (paymentMethod === 'Efectivo') {
+    if (paymentMethod === 'efectivo') {
       const received = parseFloat(cashReceived);
       if (isNaN(received) || received < total) {
         toast.error('Monto recibido es insuficiente');
@@ -132,12 +133,12 @@ export default function POS() {
       });
 
       const received = parseFloat(cashReceived);
-      const change = (paymentMethod === 'Efectivo' && !isNaN(received)) ? received - total : null;
+      const change = (paymentMethod === 'efectivo' && !isNaN(received)) ? received - total : null;
 
       setSuccessMessage({ total, change });
       setCartItems([]);
       setCashReceived('');
-      setPaymentMethod('Efectivo');
+      setPaymentMethod('efectivo');
       loadData();
 
       setTimeout(() => {
@@ -289,28 +290,28 @@ export default function POS() {
 
           <div className="flex gap-2">
             <button
-              onClick={() => setPaymentMethod('Efectivo')}
+              onClick={() => setPaymentMethod('efectivo')}
               className={`flex-1 py-3 rounded-lg font-bold text-sm transition-colors border ${
-                paymentMethod === 'Efectivo' 
-                  ? 'bg-brand-orange text-white border-brand-orange shadow-md' 
+                paymentMethod === 'efectivo'
+                  ? 'bg-brand-orange text-white border-brand-orange shadow-md'
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
               }`}
             >
               Efectivo
             </button>
             <button
-              onClick={() => setPaymentMethod('QR / Transferencia')}
+              onClick={() => setPaymentMethod('qr')}
               className={`flex-1 py-3 rounded-lg font-bold text-sm transition-colors border ${
-                paymentMethod === 'QR / Transferencia' 
-                  ? 'bg-brand-orange text-white border-brand-orange shadow-md' 
+                paymentMethod === 'qr'
+                  ? 'bg-brand-orange text-white border-brand-orange shadow-md'
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
               }`}
             >
-              QR / Transferencia
+              QR
             </button>
           </div>
 
-          {paymentMethod === 'Efectivo' && (
+          {paymentMethod === 'efectivo' && (
             <div className="bg-white p-3 rounded-lg border border-gray-200 space-y-2">
               <div className="flex justify-between items-center">
                 <label className="text-sm font-medium text-gray-600">Monto Recibido</label>

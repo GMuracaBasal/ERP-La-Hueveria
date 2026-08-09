@@ -27,6 +27,7 @@ export function getPurchaseErrorMessage(err: unknown): string {
   }
   if (msg.includes('REASON_REQUIRED')) return 'Debés indicar un motivo.';
   if (msg.includes('SUPPLIER_REQUIRED')) return 'Debés seleccionar un proveedor.';
+  if (msg.includes('PAYMENT_REQUIRED')) return 'Debés indicar el medio de pago.';
   if (msg.includes('INSUFFICIENT_STOCK')) {
     return 'Stock insuficiente para revertir uno o más productos.';
   }

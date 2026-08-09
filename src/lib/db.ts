@@ -3,12 +3,13 @@ import { generateId } from './utils';
 import {
   User, Product, PriceList, Supplier, Customer,
   Purchase, Sale, InventoryMovement, FinanceMovement, Settings,
-  AccountMovement, PointOfSale, SaleCondition, Payment, PaymentType,
+  AccountMovement, PointOfSale, SaleCondition, PurchaseCondition,
+  Payment, PaymentType,
 } from '../types';
 import { roundMoney } from './accountMovements';
 import {
   defaultPaymentConcept,
-  paymentMethodLabel,
+  normalizePaymentMethod,
   type PaymentMethodCode,
 } from './paymentMethods';
 
@@ -61,12 +62,14 @@ const mapInventoryToDB = (m: InventoryMovement) => ({
 
 const mapFinanceFromDB = (r: any): FinanceMovement => ({
   id: r.id, date: r.date, type: r.type, concept: r.concept,
-  paymentMethod: r.payment_method, amount: Number(r.amount), referenceId: r.reference_id,
+  paymentMethod: normalizePaymentMethod(r.payment_method) ?? r.payment_method ?? undefined,
+  amount: Number(r.amount), referenceId: r.reference_id,
   voided: r.voided ?? false,
 });
 const mapFinanceToDB = (m: FinanceMovement) => ({
   id: m.id, date: m.date, type: m.type, concept: m.concept,
-  payment_method: m.paymentMethod, amount: m.amount, reference_id: m.referenceId,
+  payment_method: normalizePaymentMethod(m.paymentMethod) ?? m.paymentMethod ?? null,
+  amount: m.amount, reference_id: m.referenceId,
   voided: m.voided ?? false,
 });
 
@@ -213,23 +216,40 @@ export const priceListsDB = {
 
 // ─── Compras (con items en tabla hija) ───────────────────────────────
 
-const mapPurchaseFromDB = (p: any): Purchase => ({
-  id: p.id,
-  date: p.date,
-  supplierId: p.supplier_id,
-  invoiceNumber: p.invoice_number ?? '',
-  notes: p.notes ?? '',
-  total: Number(p.total),
-  voided: p.voided ?? false,
-  voidedAt: p.voided_at ?? null,
-  voidedBy: p.voided_by ?? null,
-  items: (p.purchase_items ?? []).map((it: any) => ({
-    productId: it.product_id,
-    quantity: Number(it.quantity),
-    unitCost: Number(it.unit_cost),
-    subtotal: Number(it.subtotal),
-  })),
-});
+function inferPurchaseCondition(p: any): PurchaseCondition {
+  if (p.condition === 'contado' || p.condition === 'cuenta_corriente') {
+    return p.condition;
+  }
+  return 'contado';
+}
+
+const mapPurchaseFromDB = (p: any): Purchase => {
+  const condition = inferPurchaseCondition(p);
+  const paymentMethod =
+    condition === 'cuenta_corriente'
+      ? null
+      : normalizePaymentMethod(p.payment_method);
+
+  return {
+    id: p.id,
+    date: p.date,
+    supplierId: p.supplier_id,
+    invoiceNumber: p.invoice_number ?? '',
+    notes: p.notes ?? '',
+    condition,
+    paymentMethod,
+    total: Number(p.total),
+    voided: p.voided ?? false,
+    voidedAt: p.voided_at ?? null,
+    voidedBy: p.voided_by ?? null,
+    items: (p.purchase_items ?? []).map((it: any) => ({
+      productId: it.product_id,
+      quantity: Number(it.quantity),
+      unitCost: Number(it.unit_cost),
+      subtotal: Number(it.subtotal),
+    })),
+  };
+};
 
 function purchaseConcept(purchaseId: string, supplierName?: string, invoiceNumber?: string): string {
   const short = purchaseId.slice(0, 6).toUpperCase();
@@ -370,12 +390,21 @@ export const purchasesDB = {
   },
 
   async save(purchase: Purchase): Promise<void> {
+    const condition: PurchaseCondition =
+      purchase.condition === 'cuenta_corriente' ? 'cuenta_corriente' : 'contado';
+    const paymentMethod =
+      condition === 'cuenta_corriente'
+        ? null
+        : normalizePaymentMethod(purchase.paymentMethod);
+
     const { error } = await supabase.from('purchases').upsert({
       id: purchase.id,
       date: purchase.date,
       supplier_id: purchase.supplierId,
       invoice_number: purchase.invoiceNumber,
       notes: purchase.notes,
+      condition,
+      payment_method: paymentMethod,
       total: purchase.total,
       voided: purchase.voided ?? false,
     });
@@ -396,7 +425,9 @@ export const purchasesDB = {
   },
 
   /**
-   * Compra Contado: stock + Haber (libro) + Debe/pago (libro) + egreso en caja.
+   * Siempre: stock + Haber (deuda proveedor).
+   * Contado: + Debe/pago + egreso en caja.
+   * CC: sin Debe ni egreso (queda saldo).
    */
   async createPurchase(params: {
     purchase: Purchase;
@@ -409,8 +440,22 @@ export const purchasesDB = {
       throw new Error('INVALID_ITEMS');
     }
 
+    const condition: PurchaseCondition =
+      purchase.condition === 'cuenta_corriente' ? 'cuenta_corriente' : 'contado';
+    if (condition === 'contado' && !normalizePaymentMethod(purchase.paymentMethod)) {
+      throw new Error('PAYMENT_REQUIRED');
+    }
+
     const total = roundMoney(purchase.items.reduce((acc, i) => acc + i.subtotal, 0));
-    const normalized: Purchase = { ...purchase, total, voided: false };
+    const normalized: Purchase = {
+      ...purchase,
+      total,
+      condition,
+      paymentMethod: condition === 'cuenta_corriente'
+        ? null
+        : normalizePaymentMethod(purchase.paymentMethod),
+      voided: false,
+    };
     const concept = purchaseConcept(
       normalized.id,
       supplierName,
@@ -428,22 +473,25 @@ export const purchasesDB = {
       concept,
       createdBy: userId,
     });
-    await insertPurchaseAccountDebePago({
-      purchaseId: normalized.id,
-      supplierId: normalized.supplierId,
-      date: normalized.date,
-      total: normalized.total,
-      createdBy: userId,
-    });
 
-    await financeDB.save({
-      id: generateId(),
-      date: normalized.date,
-      type: 'egreso',
-      concept,
-      amount: normalized.total,
-      referenceId: normalized.id,
-    });
+    if (normalized.condition === 'contado') {
+      await insertPurchaseAccountDebePago({
+        purchaseId: normalized.id,
+        supplierId: normalized.supplierId,
+        date: normalized.date,
+        total: normalized.total,
+        createdBy: userId,
+      });
+      await financeDB.save({
+        id: generateId(),
+        date: normalized.date,
+        type: 'egreso',
+        concept,
+        amount: normalized.total,
+        paymentMethod: normalized.paymentMethod ?? undefined,
+        referenceId: normalized.id,
+      });
+    }
   },
 
   /** @deprecated Usar voidPurchase */
@@ -478,7 +526,10 @@ export const purchasesDB = {
     purchaseId: string,
     userId: string,
     reason: string,
-    data: Pick<Purchase, 'supplierId' | 'invoiceNumber' | 'notes' | 'date' | 'items'> & {
+    data: Pick<
+      Purchase,
+      'supplierId' | 'invoiceNumber' | 'notes' | 'date' | 'items' | 'condition' | 'paymentMethod'
+    > & {
       supplierName?: string;
     },
   ): Promise<void> {
@@ -486,6 +537,12 @@ export const purchasesDB = {
     if (!data.supplierId) throw new Error('SUPPLIER_REQUIRED');
     if (!data.items.length || data.items.some((i) => !i.productId || i.quantity <= 0)) {
       throw new Error('INVALID_ITEMS');
+    }
+
+    const nextCondition: PurchaseCondition =
+      data.condition === 'cuenta_corriente' ? 'cuenta_corriente' : 'contado';
+    if (nextCondition === 'contado' && !normalizePaymentMethod(data.paymentMethod)) {
+      throw new Error('PAYMENT_REQUIRED');
     }
 
     const existing = await this.getById(purchaseId);
@@ -498,8 +555,6 @@ export const purchasesDB = {
     await voidInventoryMovementsForSale(purchaseId);
     await voidAccountMovementsForSale(purchaseId, userId);
 
-    // Tras revertir entradas, validar que no quede stock negativo al re-aplicar
-    // (las entradas vuelven a sumar; no hace falta stock previo).
     const total = roundMoney(data.items.reduce((acc, i) => acc + i.subtotal, 0));
     const updated: Purchase = {
       ...existing,
@@ -509,6 +564,11 @@ export const purchasesDB = {
       date: data.date,
       items: data.items,
       total,
+      condition: nextCondition,
+      paymentMethod:
+        nextCondition === 'cuenta_corriente'
+          ? null
+          : normalizePaymentMethod(data.paymentMethod),
     };
 
     const { error: headerErr } = await supabase.from('purchases').update({
@@ -517,6 +577,8 @@ export const purchasesDB = {
       notes: updated.notes,
       total: updated.total,
       date: updated.date,
+      condition: updated.condition,
+      payment_method: updated.paymentMethod,
     }).eq('id', purchaseId);
     if (headerErr) throw headerErr;
 
@@ -539,6 +601,7 @@ export const purchasesDB = {
       preservedConcept ??
       purchaseConcept(purchaseId, data.supplierName, updated.invoiceNumber);
 
+    // Siempre Haber (deuda). Contado agrega Debe + egreso.
     await insertPurchaseAccountHaber({
       purchaseId,
       supplierId: updated.supplierId,
@@ -547,22 +610,25 @@ export const purchasesDB = {
       concept,
       createdBy: userId,
     });
-    await insertPurchaseAccountDebePago({
-      purchaseId,
-      supplierId: updated.supplierId,
-      date: updated.date,
-      total: updated.total,
-      createdBy: userId,
-    });
 
-    await financeDB.save({
-      id: generateId(),
-      date: updated.date,
-      type: 'egreso',
-      concept,
-      amount: updated.total,
-      referenceId: purchaseId,
-    });
+    if (updated.condition === 'contado') {
+      await insertPurchaseAccountDebePago({
+        purchaseId,
+        supplierId: updated.supplierId,
+        date: updated.date,
+        total: updated.total,
+        createdBy: userId,
+      });
+      await financeDB.save({
+        id: generateId(),
+        date: updated.date,
+        type: 'egreso',
+        concept,
+        amount: updated.total,
+        paymentMethod: updated.paymentMethod ?? undefined,
+        referenceId: purchaseId,
+      });
+    }
 
     await insertPurchaseAuditLog({
       purchaseId,
@@ -592,11 +658,10 @@ function inferCondition(s: any): SaleCondition {
 
 const mapSaleFromDB = (s: any): Sale => {
   const condition = inferCondition(s);
-  const rawPayment = s.payment_method;
   const paymentMethod =
-    condition === 'cuenta_corriente' || rawPayment === 'Cuenta Corriente'
+    condition === 'cuenta_corriente' || s.payment_method === 'Cuenta Corriente'
       ? null
-      : rawPayment ?? null;
+      : normalizePaymentMethod(s.payment_method);
 
   return {
     id: s.id,
@@ -818,13 +883,18 @@ export const salesDB = {
   },
 
   async save(sale: Sale): Promise<void> {
+    const condition: SaleCondition =
+      sale.condition === 'cuenta_corriente' ? 'cuenta_corriente' : 'contado';
+    const paymentMethod =
+      condition === 'cuenta_corriente' ? null : normalizePaymentMethod(sale.paymentMethod);
+
     const { error } = await supabase.from('sales').upsert({
       id: sale.id,
       date: sale.date,
       customer_id: sale.customerId,
       point_of_sale: sale.pointOfSale,
-      condition: sale.condition,
-      payment_method: sale.condition === 'cuenta_corriente' ? null : sale.paymentMethod,
+      condition,
+      payment_method: paymentMethod,
       total: sale.total,
       voided: sale.voided ?? false,
     });
@@ -857,7 +927,9 @@ export const salesDB = {
     if (!sale.items.length || sale.items.some((i) => !i.productId || i.quantity <= 0)) {
       throw new Error('INVALID_ITEMS');
     }
-    if (sale.condition === 'contado' && !sale.paymentMethod) {
+    const condition: SaleCondition =
+      sale.condition === 'cuenta_corriente' ? 'cuenta_corriente' : 'contado';
+    if (condition === 'contado' && !normalizePaymentMethod(sale.paymentMethod)) {
       throw new Error('PAYMENT_REQUIRED');
     }
 
@@ -865,7 +937,9 @@ export const salesDB = {
     const normalized: Sale = {
       ...sale,
       total,
-      paymentMethod: sale.condition === 'cuenta_corriente' ? null : sale.paymentMethod,
+      condition,
+      paymentMethod:
+        condition === 'cuenta_corriente' ? null : normalizePaymentMethod(sale.paymentMethod),
       voided: false,
     };
 
@@ -952,7 +1026,7 @@ export const salesDB = {
     const nextCondition: SaleCondition = sale.condition === 'cuenta_corriente'
       ? 'cuenta_corriente'
       : 'contado';
-    if (nextCondition === 'contado' && !sale.paymentMethod) {
+    if (nextCondition === 'contado' && !normalizePaymentMethod(sale.paymentMethod)) {
       throw new Error('PAYMENT_REQUIRED');
     }
 
@@ -975,7 +1049,10 @@ export const salesDB = {
     const updated: Sale = {
       ...existing,
       customerId: sale.customerId,
-      paymentMethod: nextCondition === 'cuenta_corriente' ? null : sale.paymentMethod,
+      paymentMethod:
+        nextCondition === 'cuenta_corriente'
+          ? null
+          : normalizePaymentMethod(sale.paymentMethod),
       date: sale.date,
       items: sale.items,
       total,
@@ -1113,7 +1190,7 @@ const mapPaymentFromDB = (r: any): Payment => ({
   supplierId: r.supplier_id ?? null,
   date: r.date,
   amount: Number(r.amount),
-  paymentMethod: r.payment_method,
+  paymentMethod: normalizePaymentMethod(r.payment_method) ?? r.payment_method,
   concept: r.concept ?? null,
   createdBy: r.created_by ?? null,
   createdAt: r.created_at,
@@ -1157,7 +1234,6 @@ async function createPaymentClientSide(params: {
   if (!(amount > 0)) throw new Error('INVALID_AMOUNT');
 
   const paymentId = generateId();
-  const methodLabel = paymentMethodLabel(params.paymentMethod);
   const concept =
     (params.concept && params.concept.trim()) ||
     defaultPaymentConcept(params.type, params.paymentMethod);
@@ -1200,7 +1276,7 @@ async function createPaymentClientSide(params: {
       date: params.date,
       type: params.type === 'cobro' ? 'ingreso' : 'egreso',
       concept,
-      payment_method: methodLabel,
+      payment_method: params.paymentMethod,
       amount,
       reference_id: paymentId,
       voided: false,

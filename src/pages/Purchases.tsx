@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { purchasesDB, suppliersDB, productsDB } from '../lib/db';
-import { Purchase, PurchaseItem, Supplier, Product } from '../types';
+import { Purchase, PurchaseItem, Supplier, Product, PurchaseCondition } from '../types';
 import { Button, Modal, Badge, SearchableSelect, DocumentActions, useToast } from '../components/ui';
 import PurchaseTicketModal from '../components/PurchaseTicketModal';
 import FiltroFechas, { defaultDateRange, isDateInRange } from '../components/FiltroFechas';
@@ -8,6 +8,11 @@ import InputFecha from '../components/InputFecha';
 import { generateId, formatCurrency, formatFechaHora, isoDateToTimestamp, todayISODate } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { canModifyPurchase, getPurchaseErrorMessage } from '../lib/purchasePermissions';
+import {
+  TERMINAL_PAYMENT_OPTIONS,
+  paymentMethodLabel,
+  type PaymentMethodCode,
+} from '../lib/paymentMethods';
 
 export default function Purchases() {
   const { user } = useAuth();
@@ -22,9 +27,14 @@ export default function Purchases() {
   const [ticketMode, setTicketMode] = useState<'view' | 'edit' | 'void'>('view');
 
   const [formData, setFormData] = useState({ supplierId: '', invoiceNumber: '', notes: '' });
+  const [condition, setCondition] = useState<PurchaseCondition>('contado');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodCode>('efectivo');
   const [purchaseDate, setPurchaseDate] = useState(todayISODate);
   const [items, setItems] = useState<PurchaseItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  const conditionLabel = (c: PurchaseCondition) =>
+    c === 'cuenta_corriente' ? 'Cuenta Corriente' : 'Contado';
 
   const filteredPurchases = useMemo(
     () => purchases.filter((p) => isDateInRange(p.date, dateRange.from, dateRange.to)),
@@ -46,6 +56,8 @@ export default function Purchases() {
 
   const handleOpenModal = () => {
     setFormData({ supplierId: '', invoiceNumber: '', notes: '' });
+    setCondition('contado');
+    setPaymentMethod('efectivo');
     setPurchaseDate(todayISODate());
     setItems([]);
     setIsModalOpen(true);
@@ -86,6 +98,10 @@ export default function Purchases() {
       toast.error('Agregá productos válidos.');
       return;
     }
+    if (condition === 'contado' && !paymentMethod) {
+      toast.error('Debés indicar el medio de pago.');
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -98,12 +114,18 @@ export default function Purchases() {
           id: generateId(),
           date: purchaseDateIso,
           ...formData,
+          condition,
+          paymentMethod: condition === 'contado' ? paymentMethod : null,
           total,
           items,
         },
       });
 
-      toast.success('Compra registrada correctamente.');
+      toast.success(
+        condition === 'cuenta_corriente'
+          ? 'Compra en cuenta corriente registrada (sin egreso de caja).'
+          : 'Compra registrada correctamente.',
+      );
       setIsModalOpen(false);
       load();
     } catch (err) {
@@ -136,6 +158,8 @@ export default function Purchases() {
               <tr>
                 <th className="px-6 py-3 text-left">Fecha</th>
                 <th className="px-6 py-3 text-left">Proveedor / Factura</th>
+                <th className="px-6 py-3 text-left">Condición</th>
+                <th className="px-6 py-3 text-left">Medio Pago</th>
                 <th className="px-6 py-3 text-left">Total</th>
                 <th className="px-6 py-3 text-left">Estado</th>
                 <th className="px-6 py-3 text-right">Acciones</th>
@@ -155,6 +179,16 @@ export default function Purchases() {
                         {suppliers.find((s) => s.id === p.supplierId)?.name || 'N/A'}
                       </div>
                       <div className="text-xs text-gray-500">{p.invoiceNumber || 'S/N'}</div>
+                    </td>
+                    <td className="px-6 py-3">
+                      <Badge variant={p.condition === 'cuenta_corriente' ? 'warning' : 'default'}>
+                        {conditionLabel(p.condition)}
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-3">
+                      {p.paymentMethod
+                        ? <Badge variant="default">{paymentMethodLabel(p.paymentMethod)}</Badge>
+                        : <span className="text-gray-400 text-xs">—</span>}
                     </td>
                     <td className={`px-6 py-3 font-bold ${p.voided ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
                       {formatCurrency(p.total)}
@@ -178,7 +212,7 @@ export default function Purchases() {
               })}
               {filteredPurchases.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
                     No hay compras en el período seleccionado
                   </td>
                 </tr>
@@ -229,6 +263,51 @@ export default function Purchases() {
               />
             </div>
           </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm mb-1">Condición</label>
+              <SearchableSelect
+                options={[
+                  { value: 'contado', label: 'Contado' },
+                  { value: 'cuenta_corriente', label: 'Cuenta Corriente' },
+                ]}
+                value={{
+                  value: condition,
+                  label: conditionLabel(condition),
+                }}
+                onChange={(selected: { value: string } | null) => {
+                  const next = (selected?.value === 'cuenta_corriente'
+                    ? 'cuenta_corriente'
+                    : 'contado') as PurchaseCondition;
+                  setCondition(next);
+                  if (next === 'contado' && !paymentMethod) setPaymentMethod('efectivo');
+                }}
+              />
+            </div>
+            {condition === 'contado' ? (
+              <div>
+                <label className="block text-sm mb-1">Medio de Pago</label>
+                <SearchableSelect
+                  options={TERMINAL_PAYMENT_OPTIONS}
+                  value={
+                    TERMINAL_PAYMENT_OPTIONS.find((o) => o.value === paymentMethod) ??
+                    TERMINAL_PAYMENT_OPTIONS[0]
+                  }
+                  onChange={(selected: { value: string } | null) =>
+                    setPaymentMethod((selected?.value as PaymentMethodCode) || 'efectivo')
+                  }
+                  placeholder="Seleccionar medio..."
+                />
+              </div>
+            ) : (
+              <div className="flex items-end">
+                <p className="text-xs text-brand-muted italic pb-2">
+                  Sin pago: asienta Haber en la cuenta del proveedor. No egresa de caja.
+                </p>
+              </div>
+            )}
+          </div>
+
           <div>
             <label className="block text-sm mb-1">Notas</label>
             <textarea

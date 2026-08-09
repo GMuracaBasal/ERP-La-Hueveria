@@ -12,13 +12,11 @@ import {
   canModifySale,
   getSaleRpcErrorMessage,
 } from '../lib/salePermissions';
-
-const MAYORISTA_PAYMENT_OPTIONS = [
-  { value: 'Efectivo', label: 'Efectivo' },
-  { value: 'Transferencia', label: 'Transferencia' },
-  { value: 'Tarjeta de Débito', label: 'Tarjeta de Débito' },
-  { value: 'Tarjeta de Crédito', label: 'Tarjeta de Crédito' },
-];
+import {
+  TERMINAL_PAYMENT_OPTIONS,
+  paymentMethodLabel,
+  type PaymentMethodCode,
+} from '../lib/paymentMethods';
 
 export default function Sales() {
   const { user } = useAuth();
@@ -40,7 +38,7 @@ export default function Sales() {
 
   const [customerId, setCustomerId] = useState('');
   const [condition, setCondition] = useState<SaleCondition>('contado');
-  const [paymentMethod, setPaymentMethod] = useState('Efectivo');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodCode>('efectivo');
   const [saleDate, setSaleDate] = useState(todayISODate);
   const [items, setItems] = useState<SaleItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -90,7 +88,7 @@ export default function Sales() {
   const handleOpenModal = () => {
     setCustomerId('');
     setCondition('contado');
-    setPaymentMethod('Efectivo');
+    setPaymentMethod('efectivo');
     setSaleDate(todayISODate());
     setItems([]);
     setIsModalOpen(true);
@@ -238,7 +236,7 @@ export default function Sales() {
                   </td>
                   <td className="px-6 py-3">
                     {s.paymentMethod
-                      ? <Badge variant="default">{s.paymentMethod}</Badge>
+                      ? <Badge variant="default">{paymentMethodLabel(s.paymentMethod)}</Badge>
                       : <span className="text-gray-400 text-xs">—</span>}
                   </td>
                   <td className={`px-6 py-3 font-bold ${s.voided ? 'text-gray-400 line-through' : 'text-green-700'}`}>
@@ -321,7 +319,7 @@ export default function Sales() {
                     ? 'cuenta_corriente'
                     : 'contado') as SaleCondition;
                   setCondition(next);
-                  if (next === 'contado' && !paymentMethod) setPaymentMethod('Efectivo');
+                  if (next === 'contado' && !paymentMethod) setPaymentMethod('efectivo');
                 }}
               />
             </div>
@@ -329,10 +327,13 @@ export default function Sales() {
               <div>
                 <label className="block text-sm mb-1">Medio de Pago</label>
                 <SearchableSelect
-                  options={MAYORISTA_PAYMENT_OPTIONS}
-                  value={{ value: paymentMethod, label: paymentMethod }}
+                  options={TERMINAL_PAYMENT_OPTIONS}
+                  value={
+                    TERMINAL_PAYMENT_OPTIONS.find((o) => o.value === paymentMethod) ??
+                    TERMINAL_PAYMENT_OPTIONS[0]
+                  }
                   onChange={(selected: { value: string } | null) =>
-                    setPaymentMethod(selected?.value || 'Efectivo')
+                    setPaymentMethod((selected?.value as PaymentMethodCode) || 'efectivo')
                   }
                   placeholder="Seleccionar medio..."
                 />

@@ -55,12 +55,18 @@ export interface PurchaseItem {
   subtotal: number;
 }
 
+/** Condición comercial de compra (mismo vocabulario que ventas). */
+export type PurchaseCondition = 'contado' | 'cuenta_corriente';
+
 export interface Purchase {
   id: string;
   date: string;
   supplierId: string;
   invoiceNumber: string;
   notes: string;
+  condition: PurchaseCondition;
+  /** Medio real del pago. Null cuando condition = cuenta_corriente. */
+  paymentMethod: string | null;
   total: number;
   items: PurchaseItem[];
   voided?: boolean;

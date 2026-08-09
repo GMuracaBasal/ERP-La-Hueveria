@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { salesDB } from '../lib/db';
 import { Sale, SaleItem, Product, Customer, PriceList, Settings, SaleCondition } from '../types';
 import { Button, Modal, Badge, SearchableSelect, useToast } from '../components/ui';
@@ -10,8 +11,80 @@ import {
   isCuentaCorrienteSale,
   getSaleRpcErrorMessage,
 } from '../lib/salePermissions';
+import {
+  POS_PAYMENT_OPTIONS,
+  TERMINAL_PAYMENT_OPTIONS,
+  paymentMethodLabel,
+  type PaymentMethodCode,
+} from '../lib/paymentMethods';
 
 type Mode = 'view' | 'edit' | 'void';
+
+/** Contenido del comprobante (pantalla + portal de impresión). */
+function SaleTicketBody({
+  sale,
+  products,
+  settings,
+  customerName,
+  isVoided,
+}: {
+  sale: Sale;
+  products: Product[];
+  settings: Settings | null;
+  customerName: string;
+  isVoided: boolean;
+}) {
+  return (
+    <>
+      <div className="text-center pb-4 border-b border-dashed print-ticket-header relative">
+        {isVoided && (
+          <Badge variant="danger" className="mb-2 print-voided">ANULADO</Badge>
+        )}
+        <h2 className="text-lg font-bold">{settings?.businessName}</h2>
+        <div className="text-sm text-gray-500">Ticket #{sale.id.slice(0, 8).toUpperCase()}</div>
+        <div className="text-sm text-gray-500">
+          {formatFechaHora(sale.date)}
+        </div>
+      </div>
+      <div className="text-sm">
+        <span className="font-semibold">Cliente:</span>{' '}
+        {customerName || 'Consumidor Final'}
+        <br />
+        <span className="font-semibold">Condición:</span>{' '}
+        {isCuentaCorrienteSale(sale) ? 'Cuenta Corriente' : 'Contado'}
+        <br />
+        <span className="font-semibold">Pago:</span>{' '}
+        {paymentMethodLabel(sale.paymentMethod)}
+      </div>
+      <table className="w-full text-sm text-left font-mono">
+        <thead>
+          <tr className="border-b">
+            <th className="p-1">Desc</th>
+            <th className="p-1 text-center">Cant</th>
+            <th className="p-1 text-right">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sale.items.map((i, idx) => (
+            <tr key={idx}>
+              <td className="p-1 pr-2 truncate max-w-[200px]">
+                {products.find((p) => p.id === i.productId)?.name}
+              </td>
+              <td className="p-1 text-center">{i.quantity}</td>
+              <td className="p-1 text-right">{formatCurrency(i.subtotal)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="border-t border-dashed pt-4 flex justify-between items-end font-bold text-lg print-total">
+        <span>TOTAL</span>
+        <span className={isVoided ? 'line-through text-gray-400' : ''}>
+          {formatCurrency(sale.total)}
+        </span>
+      </div>
+    </>
+  );
+}
 
 interface SaleTicketModalProps {
   sale: Sale | null;
@@ -26,18 +99,6 @@ interface SaleTicketModalProps {
   /** Modo inicial al abrir (ojo=view, lápiz=edit, X=void). */
   initialMode?: Mode;
 }
-
-const POS_PAYMENT_OPTIONS = [
-  { value: 'Efectivo', label: 'Efectivo' },
-  { value: 'QR / Transferencia', label: 'QR / Transferencia' },
-];
-
-const TERMINAL_PAYMENT_OPTIONS = [
-  { value: 'Efectivo', label: 'Efectivo' },
-  { value: 'Transferencia', label: 'Transferencia' },
-  { value: 'Tarjeta de Débito', label: 'Tarjeta de Débito' },
-  { value: 'Tarjeta de Crédito', label: 'Tarjeta de Crédito' },
-];
 
 function getAvailableStock(productId: string, originalSale: Sale, products: Product[]): number {
   const p = products.find((x) => x.id === productId);
@@ -64,7 +125,7 @@ export default function SaleTicketModal({
   const [mode, setMode] = useState<Mode>('view');
   const [customerId, setCustomerId] = useState('');
   const [condition, setCondition] = useState<SaleCondition>('contado');
-  const [paymentMethod, setPaymentMethod] = useState('Efectivo');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodCode>('efectivo');
   const [items, setItems] = useState<SaleItem[]>([]);
   const [editReason, setEditReason] = useState('');
   const [voidReason, setVoidReason] = useState('');
@@ -83,7 +144,7 @@ export default function SaleTicketModal({
         ? 'contado'
         : sale.condition,
     );
-    setPaymentMethod(sale.paymentMethod || 'Efectivo');
+    setPaymentMethod((sale.paymentMethod as PaymentMethodCode) || 'efectivo');
     setItems(sale.items.map((i) => ({ ...i })));
     setEditReason('');
     setVoidReason('');
@@ -229,54 +290,36 @@ export default function SaleTicketModal({
     <Modal isOpen={!!sale} onClose={onClose} title={title}>
       {mode === 'view' && (
         <div className="space-y-4">
-          <div className="printable-ticket space-y-4">
-            <div className="text-center pb-4 border-b border-dashed print-ticket-header relative">
-              {isVoided && (
-                <Badge variant="danger" className="mb-2 print-voided">ANULADO</Badge>
-              )}
-              <h2 className="text-lg font-bold">{settings?.businessName}</h2>
-              <div className="text-sm text-gray-500">Ticket #{sale.id.slice(0, 8).toUpperCase()}</div>
-              <div className="text-sm text-gray-500">
-                {formatFechaHora(sale.date)}
-              </div>
-            </div>
-            <div className="text-sm">
-              <span className="font-semibold">Cliente:</span>{' '}
-              {customerName || 'Consumidor Final'}
-              <br />
-              <span className="font-semibold">Condición:</span>{' '}
-              {isCuentaCorrienteSale(sale) ? 'Cuenta Corriente' : 'Contado'}
-              <br />
-              <span className="font-semibold">Pago:</span>{' '}
-              {sale.paymentMethod || '—'}
-            </div>
-            <table className="w-full text-sm text-left font-mono">
-              <thead>
-                <tr className="border-b">
-                  <th className="p-1">Desc</th>
-                  <th className="p-1 text-center">Cant</th>
-                  <th className="p-1 text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sale.items.map((i, idx) => (
-                  <tr key={idx}>
-                    <td className="p-1 pr-2 truncate max-w-[200px]">
-                      {products.find((p) => p.id === i.productId)?.name}
-                    </td>
-                    <td className="p-1 text-center">{i.quantity}</td>
-                    <td className="p-1 text-right">{formatCurrency(i.subtotal)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="border-t border-dashed pt-4 flex justify-between items-end font-bold text-lg print-total">
-              <span>TOTAL</span>
-              <span className={isVoided ? 'line-through text-gray-400' : ''}>
-                {formatCurrency(sale.total)}
-              </span>
-            </div>
+          {/* Vista en pantalla (dentro del modal; no se imprime) */}
+          <div className="space-y-4 no-print">
+            <SaleTicketBody
+              sale={sale}
+              products={products}
+              settings={settings}
+              customerName={customerName || 'Consumidor Final'}
+              isVoided={isVoided}
+            />
           </div>
+
+          {/* Portal a body: fuera del modal para que @media print no lo recorte */}
+          {typeof document !== 'undefined' &&
+            createPortal(
+              <div className="printable-ticket space-y-4" aria-hidden="true">
+                <SaleTicketBody
+                  sale={sale}
+                  products={products}
+                  settings={settings}
+                  customerName={customerName || 'Consumidor Final'}
+                  isVoided={isVoided}
+                />
+              </div>,
+              document.body,
+            )}
+
+          <p className="text-xs text-brand-muted no-print">
+            Tip: en el diálogo de impresión, desactivá “Encabezados y pies de página” para no
+            imprimir la fecha/URL del navegador.
+          </p>
 
           <div className="flex justify-end gap-2 pt-4 border-t no-print">
             <Button variant="secondary" onClick={() => window.print()}>
@@ -348,9 +391,14 @@ export default function SaleTicketModal({
               <label className="block text-sm mb-1">Medio de Pago</label>
               <SearchableSelect
                 options={paymentOptions}
-                value={{ value: paymentMethod, label: paymentMethod }}
+                value={
+                  paymentOptions.find((o) => o.value === paymentMethod) ??
+                  paymentOptions[0]
+                }
                 onChange={(selected: { value: string } | null) =>
-                  setPaymentMethod(selected?.value || paymentOptions[0].value)
+                  setPaymentMethod(
+                    (selected?.value as PaymentMethodCode) || paymentOptions[0].value,
+                  )
                 }
               />
             </div>

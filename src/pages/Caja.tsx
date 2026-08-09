@@ -9,6 +9,7 @@ import SaleTicketModal from '../components/SaleTicketModal';
 import FiltroFechas, { defaultDateRange, isDateInRange } from '../components/FiltroFechas';
 import { canModifySale } from '../lib/salePermissions';
 import { useAuth } from '../contexts/AuthContext';
+import { normalizePaymentMethod, paymentMethodLabel } from '../lib/paymentMethods';
 
 export default function Caja() {
   const { user } = useAuth();
@@ -68,10 +69,15 @@ export default function Caja() {
   };
 
   const currentTotal = finances.reduce((acc, f) => acc + f.amount, 0);
-  const totalEfectivo = finances.filter(f => f.paymentMethod === 'Efectivo').reduce((acc, f) => acc + f.amount, 0);
-  const countEfectivo = finances.filter(f => f.paymentMethod === 'Efectivo').length;
-  const totalTransferencia = finances.filter(f => f.paymentMethod === 'QR / Transferencia').reduce((acc, f) => acc + f.amount, 0);
-  const countTransferencia = finances.filter(f => f.paymentMethod === 'QR / Transferencia').length;
+  const isEfectivo = (m?: string) => normalizePaymentMethod(m) === 'efectivo';
+  const isQrOrTransfer = (m?: string) => {
+    const code = normalizePaymentMethod(m);
+    return code === 'qr' || code === 'transferencia';
+  };
+  const totalEfectivo = finances.filter((f) => isEfectivo(f.paymentMethod)).reduce((acc, f) => acc + f.amount, 0);
+  const countEfectivo = finances.filter((f) => isEfectivo(f.paymentMethod)).length;
+  const totalTransferencia = finances.filter((f) => isQrOrTransfer(f.paymentMethod)).reduce((acc, f) => acc + f.amount, 0);
+  const countTransferencia = finances.filter((f) => isQrOrTransfer(f.paymentMethod)).length;
 
   const rangeLabel =
     dateRange.from === dateRange.to
@@ -153,8 +159,8 @@ export default function Caja() {
                         {descList}
                       </td>
                       <td className="px-6 py-4">
-                        <Badge variant={s.paymentMethod === 'Efectivo' ? 'success' : 'default'}>
-                          {s.paymentMethod || '—'}
+                        <Badge variant={normalizePaymentMethod(s.paymentMethod) === 'efectivo' ? 'success' : 'default'}>
+                          {paymentMethodLabel(s.paymentMethod)}
                         </Badge>
                       </td>
                       <td className={`px-6 py-4 text-right font-bold ${s.voided ? 'text-gray-400 line-through' : 'text-green-700'}`}>

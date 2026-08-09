@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { purchasesDB } from '../lib/db';
-import { Purchase, PurchaseItem, Product, Supplier } from '../types';
+import { Purchase, PurchaseItem, Product, Supplier, PurchaseCondition } from '../types';
 import { Button, Modal, Badge, SearchableSelect, useToast } from './ui';
 import { formatCurrency, formatFechaHora } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { canModifyPurchase, getPurchaseErrorMessage } from '../lib/purchasePermissions';
+import {
+  TERMINAL_PAYMENT_OPTIONS,
+  paymentMethodLabel,
+  type PaymentMethodCode,
+} from '../lib/paymentMethods';
 
 type Mode = 'view' | 'edit' | 'void';
 
@@ -46,6 +51,8 @@ export default function PurchaseTicketModal({
   const [supplierId, setSupplierId] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [notes, setNotes] = useState('');
+  const [condition, setCondition] = useState<PurchaseCondition>('contado');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodCode>('efectivo');
   const [items, setItems] = useState<PurchaseItem[]>([]);
   const [editReason, setEditReason] = useState('');
   const [voidReason, setVoidReason] = useState('');
@@ -61,6 +68,10 @@ export default function PurchaseTicketModal({
     setSupplierId(purchase.supplierId);
     setInvoiceNumber(purchase.invoiceNumber);
     setNotes(purchase.notes);
+    setCondition(purchase.condition === 'cuenta_corriente' ? 'cuenta_corriente' : 'contado');
+    setPaymentMethod(
+      (purchase.paymentMethod as PaymentMethodCode) || 'efectivo',
+    );
     setItems(purchase.items.map((i) => ({ ...i })));
     setEditReason('');
     setVoidReason('');
@@ -72,6 +83,8 @@ export default function PurchaseTicketModal({
   const canModify = canModifyPurchase(user, purchase);
   const supplierName = suppliers.find((s) => s.id === purchase.supplierId)?.name;
   const editTotal = items.reduce((acc, i) => acc + i.subtotal, 0);
+  const conditionLabel = (c: PurchaseCondition) =>
+    c === 'cuenta_corriente' ? 'Cuenta Corriente' : 'Contado';
 
   const updateItem = (index: number, field: keyof PurchaseItem, value: string | number) => {
     const newItems = [...items];
@@ -105,6 +118,10 @@ export default function PurchaseTicketModal({
       toast.error('Agregá al menos un producto válido.');
       return;
     }
+    if (condition === 'contado' && !paymentMethod) {
+      toast.error('Debés indicar el medio de pago.');
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -114,6 +131,8 @@ export default function PurchaseTicketModal({
         notes,
         date: purchase.date,
         items,
+        condition,
+        paymentMethod: condition === 'contado' ? paymentMethod : null,
         supplierName: suppliers.find((s) => s.id === supplierId)?.name,
       });
       toast.success('Compra actualizada correctamente.');
@@ -176,6 +195,14 @@ export default function PurchaseTicketModal({
             <div>
               <span className="font-semibold">Factura:</span>{' '}
               {purchase.invoiceNumber || 'S/N'}
+            </div>
+            <div>
+              <span className="font-semibold">Condición:</span>{' '}
+              {conditionLabel(purchase.condition)}
+            </div>
+            <div>
+              <span className="font-semibold">Pago:</span>{' '}
+              {paymentMethodLabel(purchase.paymentMethod)}
             </div>
           </div>
           <table className="w-full text-sm text-left">
@@ -255,6 +282,53 @@ export default function PurchaseTicketModal({
               onChange={(e) => setInvoiceNumber(e.target.value)}
             />
           </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm mb-1">Condición</label>
+              <SearchableSelect
+                options={[
+                  { value: 'contado', label: 'Contado' },
+                  { value: 'cuenta_corriente', label: 'Cuenta Corriente' },
+                ]}
+                value={{
+                  value: condition,
+                  label: conditionLabel(condition),
+                }}
+                onChange={(selected: { value: string } | null) => {
+                  const next = (selected?.value === 'cuenta_corriente'
+                    ? 'cuenta_corriente'
+                    : 'contado') as PurchaseCondition;
+                  setCondition(next);
+                  if (next === 'contado' && !paymentMethod) {
+                    setPaymentMethod('efectivo');
+                  }
+                }}
+              />
+            </div>
+            {condition === 'contado' ? (
+              <div>
+                <label className="block text-sm mb-1">Medio de Pago</label>
+                <SearchableSelect
+                  options={TERMINAL_PAYMENT_OPTIONS}
+                  value={
+                    TERMINAL_PAYMENT_OPTIONS.find((o) => o.value === paymentMethod) ??
+                    TERMINAL_PAYMENT_OPTIONS[0]
+                  }
+                  onChange={(selected: { value: string } | null) =>
+                    setPaymentMethod((selected?.value as PaymentMethodCode) || 'efectivo')
+                  }
+                />
+              </div>
+            ) : (
+              <div className="flex items-end">
+                <p className="text-xs text-brand-muted italic pb-2">
+                  Sin pago: solo Haber en la cuenta del proveedor. No egresa de caja.
+                </p>
+              </div>
+            )}
+          </div>
+
           <div>
             <label className="block text-sm mb-1">Notas</label>
             <textarea
@@ -357,8 +431,8 @@ export default function PurchaseTicketModal({
       {mode === 'void' && (
         <div className="space-y-4">
           <p className="text-sm text-brand-muted">
-            Esta acción revertirá el stock, el asiento en cuenta corriente del proveedor y el
-            egreso en caja. No se puede deshacer.
+            Esta acción revertirá el stock y anulará los asientos en cuenta corriente del proveedor
+            {purchase.condition === 'contado' ? ' y el egreso en caja' : ''}. No se puede deshacer.
           </p>
           <p className="text-sm">
             Compra <strong>#{purchase.id.slice(0, 8).toUpperCase()}</strong> —{' '}
