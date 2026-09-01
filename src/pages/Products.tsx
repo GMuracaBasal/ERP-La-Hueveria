@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { productsDB, priceListsDB, inventoryDB } from '../lib/db';
+import { productsDB, inventoryDB } from '../lib/db';
 import { Product } from '../types';
 import { Button, ActionButtons, Modal, Badge, SearchableSelect, useConfirm, useToast } from '../components/ui';
 import { generateId, formatCurrency } from '../lib/utils';
@@ -35,13 +35,6 @@ export default function Products() {
       } else {
         const newProduct: Product = { id: generateId(), ...formData };
         await productsDB.save(newProduct);
-        
-        // Añadir a todas las listas de precios en $0
-        const lists = await priceListsDB.getAll();
-        for (const list of lists) {
-          list.prices[newProduct.id] = 0;
-          await priceListsDB.save(list);
-        }
 
         if (newProduct.stock > 0) {
           await inventoryDB.save({

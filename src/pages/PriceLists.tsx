@@ -3,6 +3,14 @@ import { priceListsDB, productsDB } from '../lib/db';
 import { PriceList, Product } from '../types';
 import { Button, ActionButtons, Modal, Badge, useConfirm, useToast } from '../components/ui';
 import { generateId, formatCurrency } from '../lib/utils';
+import { sanitizePrices } from '../lib/priceLists';
+
+type PriceListForm = {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  prices: Record<string, number>;
+};
 
 export default function PriceLists() {
   const { confirm } = useConfirm();
@@ -11,9 +19,15 @@ export default function PriceLists() {
   const [products, setProducts] = useState<Product[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editing, setEditing] = useState<PriceList | null>(null);
-  
-  // This state holds the internal prices being edited for the modal
-  const [formData, setFormData] = useState<{name: string, isDefault: boolean, prices: Record<string, number>}>({ name: '', isDefault: false, prices: {} });
+  const [saving, setSaving] = useState(false);
+  const [nameError, setNameError] = useState('');
+
+  const [formData, setFormData] = useState<PriceListForm>({
+    id: '',
+    name: '',
+    isDefault: false,
+    prices: {},
+  });
 
   const load = async () => {
     setLists(await priceListsDB.getAll());
@@ -21,49 +35,66 @@ export default function PriceLists() {
   };
   useEffect(() => { load(); }, []);
 
-  const handleOpenModal = async (item?: PriceList) => {
+  const handleOpenModal = (item?: PriceList) => {
+    setNameError('');
+    setSaving(false);
     if (item) {
       setEditing(item);
-      setFormData({ name: item.name, isDefault: item.isDefault, prices: { ...item.prices } });
+      setFormData({
+        id: item.id,
+        name: item.name,
+        isDefault: item.isDefault,
+        prices: { ...item.prices },
+      });
     } else {
       setEditing(null);
-      const defaultPrices: Record<string, number> = {};
-      const allProducts = await productsDB.getAll();
-      for (const p of allProducts) { defaultPrices[p.id] = 0; }
-      setFormData({ name: '', isDefault: false, prices: defaultPrices });
+      setFormData({
+        id: generateId(),
+        name: '',
+        isDefault: false,
+        prices: {},
+      });
     }
     setIsModalOpen(true);
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      // Si la gurdada esDefault, hay que quitar default a todas las demas
-      if (formData.isDefault) {
-        for (const l of lists) {
-          if (l.isDefault && (!editing || l.id !== editing.id)) {
-            l.isDefault = false;
-            await priceListsDB.save(l);
-          }
-        }
-      }
+    if (saving) return;
 
-      if (editing) {
-        await priceListsDB.save({ ...editing, ...formData });
-      } else {
-        await priceListsDB.save({ id: generateId(), ...formData });
-      }
+    const normalized = formData.name.trim().toLowerCase();
+    const duplicate = lists.some(
+      (l) => l.id !== formData.id && l.name.trim().toLowerCase() === normalized,
+    );
+    if (duplicate) {
+      setNameError('Ya existe una lista con ese nombre.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await priceListsDB.save({
+        id: formData.id,
+        name: formData.name.trim(),
+        isDefault: formData.isDefault,
+        prices: sanitizePrices(formData.prices),
+      });
       toast.success(editing ? 'Lista de precios actualizada correctamente.' : 'Lista de precios creada correctamente.');
       setIsModalOpen(false);
       load();
     } catch {
       toast.error('No se pudo completar la operación. Intentá de nuevo.');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleDelete = async (id: string) => {
     const list = lists.find(l => l.id === id);
-    if (list?.isDefault) return alert('No puedes eliminar la lista por defecto. Asigna otra primero.');
+    if (list?.isDefault) {
+      toast.error('No se puede eliminar la lista por defecto. Asigná otra primero.');
+      return;
+    }
     const ok = await confirm({
       title: 'Eliminar lista de precios',
       description: 'Esta acción no se puede deshacer. Puede afectar a clientes asignados a ella.',
@@ -81,11 +112,26 @@ export default function PriceLists() {
   };
 
   const handlePriceChange = (productId: string, val: string) => {
-    setFormData(prev => ({
-      ...prev,
-      prices: { ...prev.prices, [productId]: Number(val) }
-    }));
+    setFormData(prev => {
+      const prices = { ...prev.prices };
+      if (val.trim() === '') {
+        delete prices[productId];
+      } else {
+        const n = Number(val);
+        if (Number.isFinite(n)) prices[productId] = n;
+      }
+      return { ...prev, prices };
+    });
   };
+
+  const pricedRowsFor = (list: PriceList) =>
+    Object.entries(list.prices)
+      .map(([productId, price]) => ({
+        id: productId,
+        name: products.find((p) => p.id === productId)?.name,
+        price,
+      }))
+      .filter((row): row is { id: string; name: string; price: number } => !!row.name);
 
   return (
     <div className="space-y-6">
@@ -95,7 +141,10 @@ export default function PriceLists() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {lists.map(list => (
+        {lists.map(list => {
+          const pricedRows = pricedRowsFor(list);
+          const preview = pricedRows.slice(0, 5);
+          return (
           <div key={list.id} className="bg-white rounded-2xl shadow-sm border border-brand-border flex flex-col overflow-hidden hover:shadow-md transition-shadow">
             <div className="px-6 py-4 border-b border-brand-border bg-brand-cream/30 flex justify-between items-start">
               <div>
@@ -105,30 +154,47 @@ export default function PriceLists() {
               <ActionButtons onEdit={() => handleOpenModal(list)} onDelete={() => handleDelete(list.id)} />
             </div>
             <div className="p-4">
-              <div className="text-xs uppercase font-bold text-gray-400 mb-2">{Object.keys(list.prices).length} PRODUCTOS</div>
+              <div className="text-xs uppercase font-bold text-gray-400 mb-2">{pricedRows.length} PRODUCTOS CON PRECIO</div>
+              {pricedRows.length === 0 ? (
+                <p className="text-sm text-gray-400 italic py-4 text-center">Esta lista no tiene precios cargados</p>
+              ) : (
               <div className="max-h-48 overflow-y-auto">
                 <table className="w-full text-sm">
                   <tbody className="text-gray-600">
-                    {products.slice(0, 5).map(p => (
-                      <tr key={p.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors">
-                        <td className="py-2 truncate pr-2 font-medium">{p.name}</td>
-                        <td className="py-2 text-right font-bold text-gray-900">{formatCurrency(list.prices[p.id] || 0)}</td>
+                    {preview.map(row => (
+                      <tr key={row.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors">
+                        <td className="py-2 truncate pr-2 font-medium">{row.name}</td>
+                        <td className="py-2 text-right font-bold text-gray-900">{formatCurrency(row.price)}</td>
                       </tr>
                     ))}
-                    {products.length > 5 && (
-                      <tr><td colSpan={2} className="text-center py-2 text-gray-400 text-xs italic">...y {products.length - 5} más</td></tr>
+                    {pricedRows.length > 5 && (
+                      <tr><td colSpan={2} className="text-center py-2 text-gray-400 text-xs italic">...y {pricedRows.length - 5} más</td></tr>
                     )}
                   </tbody>
                 </table>
               </div>
+              )}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editing ? 'Editar Lista de Precios' : 'Nueva Lista'}>
+      <Modal isOpen={isModalOpen} onClose={() => !saving && setIsModalOpen(false)} title={editing ? 'Editar Lista de Precios' : 'Nueva Lista'}>
         <form onSubmit={handleSave} className="space-y-4">
-          <div><label className="block text-sm">Nombre de la Lista</label><input required className="w-full border p-2 rounded" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
+          <div>
+            <label className="block text-sm">Nombre de la Lista</label>
+            <input
+              required
+              className={`w-full border p-2 rounded ${nameError ? 'border-red-400' : ''}`}
+              value={formData.name}
+              onChange={e => {
+                setNameError('');
+                setFormData({...formData, name: e.target.value});
+              }}
+            />
+            {nameError && <p className="text-xs text-brand-danger mt-1">{nameError}</p>}
+          </div>
           <div>
             <label className="flex items-center space-x-2 text-sm text-gray-700">
               <input type="checkbox" className="rounded text-brand-orange focus:ring-brand-orange" checked={formData.isDefault} onChange={e => setFormData({...formData, isDefault: e.target.checked})} />
@@ -137,6 +203,7 @@ export default function PriceLists() {
           </div>
           <div className="mt-4 pt-4 border-t">
             <h4 className="font-medium mb-2 text-sm text-gray-700">Precios de los Productos</h4>
+            <p className="text-xs text-gray-400 mb-2">Dejá vacío el campo si el producto no forma parte de esta lista.</p>
             <div className="max-h-[50vh] overflow-y-auto">
               {products.map(p => (
                 <div key={p.id} className="flex justify-between items-center py-2 border-b last:border-0 pr-2">
@@ -144,13 +211,23 @@ export default function PriceLists() {
                     {p.name} <span className="text-xs text-gray-400 block">Costo: {formatCurrency(p.costPrice)}</span>
                   </div>
                   <div className="w-32">
-                    <input type="number" required min="0" step="0.01" className="w-full border p-1 rounded text-right" value={formData.prices[p.id] !== undefined ? formData.prices[p.id] : ''} onChange={e => handlePriceChange(p.id, e.target.value)} />
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="w-full border p-1 rounded text-right"
+                      value={formData.prices[p.id] !== undefined ? formData.prices[p.id] : ''}
+                      onChange={e => handlePriceChange(p.id, e.target.value)}
+                    />
                   </div>
                 </div>
               ))}
             </div>
           </div>
-          <div className="flex justify-end gap-2 mt-4"><Button variant="secondary" type="button" onClick={() => setIsModalOpen(false)}>Cancelar</Button><Button type="submit">Guardar</Button></div>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="secondary" type="button" disabled={saving} onClick={() => setIsModalOpen(false)}>Cancelar</Button>
+            <Button type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar'}</Button>
+          </div>
         </form>
       </Modal>
     </div>

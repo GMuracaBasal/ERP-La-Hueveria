@@ -12,6 +12,12 @@ import {
   getSaleRpcErrorMessage,
 } from '../lib/salePermissions';
 import {
+  resolvePriceList,
+  getListedPrice,
+  hasSellablePrice,
+  saleHasUnsellableItems,
+} from '../lib/priceLists';
+import {
   POS_PAYMENT_OPTIONS,
   TERMINAL_PAYMENT_OPTIONS,
   paymentMethodLabel,
@@ -136,25 +142,25 @@ export default function SaleTicketModal({
     voided: isVoided,
   };
 
-  const getActivePrices = (): Record<string, number> => {
-    let targetListId = settings?.defaultPriceListId;
-    if (customerId) {
-      const c = customers.find((c) => c.id === customerId);
-      if (c?.priceListId) targetListId = c.priceListId;
-    }
-    const list = priceLists.find((l) => l.id === targetListId);
-    return list?.prices ?? {};
+  const getActiveList = (): PriceList | null => {
+    const c = customerId ? customers.find((cust) => cust.id === customerId) : undefined;
+    return resolvePriceList(priceLists, c?.priceListId);
   };
 
-  const activePrices = getActivePrices();
+  const activeList = getActiveList();
   const editTotal = items.reduce((acc, i) => acc + i.subtotal, 0);
 
   const updateItem = (index: number, field: keyof SaleItem, value: string | number) => {
     const newItems = [...items];
     const item = { ...newItems[index] };
     if (field === 'productId') {
-      item.productId = value as string;
-      item.unitPrice = activePrices[value as string] || 0;
+      const productId = value as string;
+      if (productId && !hasSellablePrice(activeList, productId)) {
+        toast.warning('Este producto no tiene precio en la lista del cliente.');
+        return;
+      }
+      item.productId = productId;
+      item.unitPrice = getListedPrice(activeList, productId) ?? 0;
     } else {
       (item as Record<string, unknown>)[field] = value;
     }
@@ -172,6 +178,10 @@ export default function SaleTicketModal({
     }
     if (items.length === 0 || items.some((i) => !i.productId || i.quantity <= 0)) {
       toast.error('Agregá al menos un producto válido.');
+      return;
+    }
+    if (saleHasUnsellableItems(items, editTotal)) {
+      toast.error('No se puede guardar una venta con total $ 0 o productos sin precio.');
       return;
     }
 
@@ -366,7 +376,10 @@ export default function SaleTicketModal({
                   <SearchableSelect
                     options={products.map((p) => ({
                       value: p.id,
-                      label: `${p.name} (${getAvailableStock(p.id, sale, products)} ${p.unit} disp.)`,
+                      label: hasSellablePrice(activeList, p.id)
+                        ? `${p.name} (${getAvailableStock(p.id, sale, products)} ${p.unit} disp.)`
+                        : `${p.name} — Sin precio`,
+                      isDisabled: item.productId !== p.id && !hasSellablePrice(activeList, p.id),
                     }))}
                     value={
                       item.productId
@@ -441,7 +454,7 @@ export default function SaleTicketModal({
             <Button type="button" variant="secondary" onClick={onClose}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting || saleHasUnsellableItems(items, editTotal)}>
               Guardar cambios
             </Button>
           </div>

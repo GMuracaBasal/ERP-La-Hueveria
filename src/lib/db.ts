@@ -193,15 +193,35 @@ export const priceListsDB = {
   },
 
   async save(list: PriceList): Promise<void> {
+    // Una sola default: bajar las demás ANTES de marcar esta, para no chocar
+    // con un índice único parcial sobre is_default = true.
+    if (list.isDefault) {
+      const { error: unsetErr } = await supabase
+        .from('price_lists')
+        .update({ is_default: false })
+        .neq('id', list.id)
+        .eq('is_default', true);
+      if (unsetErr) throw unsetErr;
+    }
+
     const { error } = await supabase.from('price_lists').upsert({
       id: list.id, name: list.name, is_default: list.isDefault,
     });
     if (error) throw error;
 
+    if (list.isDefault) {
+      await supabase
+        .from('settings')
+        .update({ default_price_list_id: list.id })
+        .eq('id', 1);
+    }
+
     await supabase.from('price_list_items').delete().eq('price_list_id', list.id);
-    const rows = Object.entries(list.prices).map(([productId, price]) => ({
-      price_list_id: list.id, product_id: productId, price,
-    }));
+    const rows = Object.entries(list.prices)
+      .filter(([, price]) => typeof price === 'number' && Number.isFinite(price))
+      .map(([productId, price]) => ({
+        price_list_id: list.id, product_id: productId, price,
+      }));
     if (rows.length > 0) {
       const { error: e2 } = await supabase.from('price_list_items').insert(rows);
       if (e2) throw e2;

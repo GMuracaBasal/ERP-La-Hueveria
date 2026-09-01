@@ -5,6 +5,7 @@ import { Button, useToast } from '../components/ui';
 import { generateId, formatCurrency } from '../lib/utils';
 import { getConsumidorFinalId } from '../lib/consumidorFinal';
 import { getSaleRpcErrorMessage } from '../lib/salePermissions';
+import { getDefaultPriceList, getListedPrice, hasSellablePrice, saleHasUnsellableItems } from '../lib/priceLists';
 import { useAuth } from '../contexts/AuthContext';
 import { type PaymentMethodCode } from '../lib/paymentMethods';
 
@@ -13,6 +14,7 @@ export default function POS() {
   const { toast } = useToast();
   const [products, setProducts] = useState<Product[]>([]);
   const [defaultList, setDefaultList] = useState<PriceList | null>(null);
+  const [listsLoaded, setListsLoaded] = useState(false);
   const [search, setSearch] = useState('');
   const [cartItems, setCartItems] = useState<SaleItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodCode>('efectivo');
@@ -31,8 +33,12 @@ export default function POS() {
   const loadData = async () => {
     setProducts(await productsDB.getAll());
     const lists = await priceListsDB.getAll();
-    const defaultL = lists.find(l => l.isDefault) || null;
+    const defaultL = getDefaultPriceList(lists);
     setDefaultList(defaultL);
+    setListsLoaded(true);
+    if (!defaultL) {
+      toast.warning('No hay una lista de precios por defecto. No se puede vender hasta asignar una.');
+    }
   };
 
   const filteredProd = products.filter(p => 
@@ -40,9 +46,8 @@ export default function POS() {
     p.sku.toLowerCase().includes(search.toLowerCase())
   );
 
-  const getProductPrice = (productId: string) => {
-    if (!defaultList) return 0;
-    return defaultList.prices[productId] || 0;
+  const getProductPrice = (productId: string): number | null => {
+    return getListedPrice(defaultList, productId);
   };
 
   const getCartQuantity = (productId: string) => {
@@ -50,7 +55,9 @@ export default function POS() {
   };
 
   const handleProductClick = (product: Product) => {
+    if (!defaultList) return;
     if (product.stock <= 0) return;
+    if (!hasSellablePrice(defaultList, product.id)) return;
 
     const existingIndex = cartItems.findIndex(item => item.productId === product.id);
     const existingQuantity = existingIndex >= 0 ? cartItems[existingIndex].quantity : 0;
@@ -58,6 +65,7 @@ export default function POS() {
     if (existingQuantity >= product.stock) return;
 
     const unitPrice = getProductPrice(product.id);
+    if (unitPrice === null || unitPrice <= 0) return;
 
     if (existingIndex >= 0) {
       const newItems = [...cartItems];
@@ -102,6 +110,15 @@ export default function POS() {
 
   const handleSaveSale = async () => {
     if (cartItems.length === 0 || !user || submitting) return;
+
+    if (!defaultList) {
+      toast.error('No hay una lista de precios por defecto. No se puede vender hasta asignar una.');
+      return;
+    }
+    if (saleHasUnsellableItems(cartItems, total)) {
+      toast.error('No se puede cerrar una venta con total $ 0 o productos sin precio.');
+      return;
+    }
 
     if (paymentMethod === 'efectivo') {
       const received = parseFloat(cashReceived);
@@ -181,6 +198,11 @@ export default function POS() {
       <div className="w-[60%] bg-brand-cream flex flex-col border-r border-brand-border">
         <div className="p-6 border-b border-brand-border bg-white flex flex-col gap-4">
           <h1 className="text-2xl font-bold text-brand-brown">Punto de Venta - {settings?.businessName || 'La Hueveria'}</h1>
+          {listsLoaded && !defaultList && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-900 p-3 rounded-lg text-sm font-medium">
+              No hay una lista de precios por defecto. No se puede vender hasta asignar una en Listas de Precios.
+            </div>
+          )}
           <input
             type="text"
             placeholder="Buscar producto..."
@@ -194,22 +216,31 @@ export default function POS() {
             {filteredProd.map(product => {
               const outOfStock = product.stock <= 0;
               const cartQty = getCartQuantity(product.id);
-              const price = getProductPrice(product.id);
+              const listedPrice = getProductPrice(product.id);
+              const noPrice = !hasSellablePrice(defaultList, product.id);
+              const blocked = outOfStock || noPrice || !defaultList;
               
               return (
                 <div 
                   key={product.id}
                   onClick={() => handleProductClick(product)}
                   className={`relative p-4 bg-white rounded-xl border border-brand-border transition-all select-none
-                    ${outOfStock ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-md hover:border-brand-orange hover:-translate-y-0.5'}
+                    ${blocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-md hover:border-brand-orange hover:-translate-y-0.5'}
                   `}
                 >
                   <div className="font-bold text-gray-800 line-clamp-2 min-h-[40px] text-sm leading-tight mb-2">{product.name}</div>
-                  <div className="text-xl font-bold text-green-600 mb-1">{formatCurrency(price)}</div>
+                  {listedPrice === null ? (
+                    <div className="text-sm font-bold text-amber-700 mb-1">Sin precio</div>
+                  ) : (
+                    <div className="text-xl font-bold text-green-600 mb-1">{formatCurrency(listedPrice)}</div>
+                  )}
                   <div className="text-xs text-gray-500">Disp: {product.stock} {product.unit}</div>
                   
                   {outOfStock && (
                     <div className="mt-2 text-xs font-bold text-red-600 bg-red-50 p-1 rounded inline-block">SIN STOCK</div>
+                  )}
+                  {!outOfStock && noPrice && (
+                    <div className="mt-2 text-xs font-bold text-amber-800 bg-amber-50 p-1 rounded inline-block">SIN PRECIO</div>
                   )}
 
                   {cartQty > 0 && (
@@ -347,7 +378,7 @@ export default function POS() {
             <Button 
               size="lg" 
               className="w-full font-bold uppercase tracking-wide py-4 shadow-lg active:scale-[0.99] transition-transform text-center flex justify-center"
-              disabled={cartItems.length === 0 || submitting}
+              disabled={cartItems.length === 0 || submitting || !defaultList || saleHasUnsellableItems(cartItems, total)}
               onClick={handleSaveSale}
             >
               {submitting ? 'Guardando…' : 'Cerrar Venta'}

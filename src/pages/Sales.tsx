@@ -13,6 +13,12 @@ import {
   getSaleRpcErrorMessage,
 } from '../lib/salePermissions';
 import {
+  resolvePriceList,
+  getListedPrice,
+  hasSellablePrice,
+  saleHasUnsellableItems,
+} from '../lib/priceLists';
+import {
   TERMINAL_PAYMENT_OPTIONS,
   paymentMethodLabel,
   type PaymentMethodCode,
@@ -73,17 +79,13 @@ export default function Sales() {
     })();
   }, []);
 
-  const getActivePrices = (): Record<string, number> => {
-    let targetListId = settings?.defaultPriceListId;
-    if (customerId) {
-      const c = customers.find((c) => c.id === customerId);
-      if (c?.priceListId) targetListId = c.priceListId;
-    }
-    const list = priceLists.find((l) => l.id === targetListId);
-    return list ? list.prices : {};
+  const getActiveList = (): PriceList | null => {
+    if (!customerId) return null;
+    const c = customers.find((cust) => cust.id === customerId);
+    return resolvePriceList(priceLists, c?.priceListId);
   };
 
-  const activePrices = getActivePrices();
+  const activeList = getActiveList();
 
   const handleOpenModal = () => {
     setCustomerId('');
@@ -101,8 +103,13 @@ export default function Sales() {
     const item = newItems[index];
 
     if (field === 'productId') {
-      item.productId = value as string;
-      item.unitPrice = activePrices[value as string] || 0;
+      const productId = value as string;
+      if (productId && !hasSellablePrice(activeList, productId)) {
+        toast.warning('Este producto no tiene precio en la lista del cliente.');
+        return;
+      }
+      item.productId = productId;
+      item.unitPrice = getListedPrice(activeList, productId) ?? 0;
     } else if (field === 'quantity') {
       item.quantity = value as number;
     } else if (field === 'unitPrice') {
@@ -125,8 +132,16 @@ export default function Sales() {
       toast.error('Debés seleccionar un cliente.');
       return;
     }
+    if (!activeList) {
+      toast.error('Este cliente no tiene lista asignada y no hay lista por defecto. No se puede vender.');
+      return;
+    }
     if (items.length === 0 || items.some((i) => !i.productId || i.quantity <= 0)) {
       toast.error('Agregá productos válidos.');
+      return;
+    }
+    if (saleHasUnsellableItems(items, total)) {
+      toast.error('No se puede cerrar una venta con total $ 0 o productos sin precio.');
       return;
     }
     if (condition === 'contado' && !paymentMethod) {
@@ -295,8 +310,16 @@ export default function Sales() {
                   : null
               }
               onChange={(selected: { value: string } | null) => {
-                setCustomerId(selected?.value || '');
+                const nextId = selected?.value || '';
+                setCustomerId(nextId);
                 setItems([]);
+                if (nextId) {
+                  const c = customers.find((cust) => cust.id === nextId);
+                  const list = resolvePriceList(priceLists, c?.priceListId);
+                  if (!list) {
+                    toast.warning('Este cliente no tiene lista asignada y no hay lista por defecto. No se puede vender.');
+                  }
+                }
               }}
               placeholder="Seleccionar cliente..."
             />
@@ -350,12 +373,20 @@ export default function Sales() {
           <div className="border-t pt-4">
             <div className="flex justify-between items-center mb-2">
               <h3 className="font-medium text-gray-900">Productos</h3>
-              <Button type="button" size="sm" variant="secondary" onClick={addItem} disabled={!customerId}>
+              <Button type="button" size="sm" variant="secondary" onClick={addItem} disabled={!customerId || !activeList}>
                 + Agregar Fila
               </Button>
             </div>
             {!customerId && (
               <p className="text-xs text-brand-muted mb-2">Seleccioná un cliente para cargar productos.</p>
+            )}
+            {customerId && !activeList && (
+              <div className="bg-amber-50 border border-amber-200 text-amber-900 p-3 rounded-lg text-sm mb-2">
+                Este cliente no tiene lista asignada y no hay lista por defecto. No se puede vender.
+              </div>
+            )}
+            {customerId && activeList && (
+              <p className="text-xs text-gray-500 mb-2">Lista de precios: {activeList.name}</p>
             )}
             <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
               {items.map((item, index) => (
@@ -364,7 +395,10 @@ export default function Sales() {
                     <SearchableSelect
                       options={products.map((p) => ({
                         value: p.id,
-                        label: `${p.name} (${p.stock} ${p.unit} disp.)`,
+                        label: hasSellablePrice(activeList, p.id)
+                          ? `${p.name} (${p.stock} ${p.unit} disp.)`
+                          : `${p.name} — Sin precio`,
+                        isDisabled: item.productId !== p.id && !hasSellablePrice(activeList, p.id),
                       }))}
                       value={
                         item.productId
@@ -418,7 +452,7 @@ export default function Sales() {
             <Button variant="secondary" type="button" onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting || !activeList || saleHasUnsellableItems(items, total)}>
               {submitting ? 'Guardando…' : 'Cerrar Venta'}
             </Button>
           </div>
