@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { salesDB, customersDB, productsDB, priceListsDB, db } from '../lib/db';
 import { Sale, SaleItem, Customer, Product, PriceList, Settings, SaleCondition } from '../types';
-import { Button, Modal, Badge, SearchableSelect, DocumentActions, useToast } from '../components/ui';
+import { Button, Modal, Badge, SearchableSelect, DocumentActions, useConfirm, useToast } from '../components/ui';
 import SaleTicketModal from '../components/SaleTicketModal';
 import InputFecha from '../components/InputFecha';
 import FiltroFechas, { defaultDateRange, isDateInRange } from '../components/FiltroFechas';
@@ -27,6 +27,7 @@ import {
 export default function Sales() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { confirm } = useConfirm();
   const [sales, setSales] = useState<Sale[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -106,7 +107,6 @@ export default function Sales() {
       const productId = value as string;
       if (productId && !hasSellablePrice(activeList, productId)) {
         toast.warning('Este producto no tiene precio en la lista del cliente.');
-        return;
       }
       item.productId = productId;
       item.unitPrice = getListedPrice(activeList, productId) ?? 0;
@@ -141,8 +141,11 @@ export default function Sales() {
       return;
     }
     if (saleHasUnsellableItems(items, total)) {
-      toast.error('No se puede cerrar una venta con total $ 0 o productos sin precio.');
-      return;
+      const ok = await confirm({
+        title: 'Hay productos con precio en $0. ¿Querés guardar la venta igual?',
+        confirmLabel: 'Sí, guardar',
+      });
+      if (!ok) return;
     }
     if (condition === 'contado' && !paymentMethod) {
       toast.error('Debés indicar el medio de pago.');
@@ -398,13 +401,14 @@ export default function Sales() {
                         label: hasSellablePrice(activeList, p.id)
                           ? `${p.name} (${p.stock} ${p.unit} disp.)`
                           : `${p.name} — Sin precio`,
-                        isDisabled: item.productId !== p.id && !hasSellablePrice(activeList, p.id),
                       }))}
                       value={
                         item.productId
                           ? {
                               value: item.productId,
-                              label: `${products.find((p) => p.id === item.productId)?.name} (${products.find((p) => p.id === item.productId)?.stock} ${products.find((p) => p.id === item.productId)?.unit} disp.)`,
+                              label: hasSellablePrice(activeList, item.productId)
+                                ? `${products.find((p) => p.id === item.productId)?.name} (${products.find((p) => p.id === item.productId)?.stock} ${products.find((p) => p.id === item.productId)?.unit} disp.)`
+                                : `${products.find((p) => p.id === item.productId)?.name} — Sin precio`,
                             }
                           : null
                       }
@@ -452,7 +456,7 @@ export default function Sales() {
             <Button variant="secondary" type="button" onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={submitting || !activeList || saleHasUnsellableItems(items, total)}>
+            <Button type="submit" disabled={submitting || !activeList}>
               {submitting ? 'Guardando…' : 'Cerrar Venta'}
             </Button>
           </div>

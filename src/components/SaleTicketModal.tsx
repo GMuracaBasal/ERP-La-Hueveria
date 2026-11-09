@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { salesDB } from '../lib/db';
 import { Sale, SaleItem, Product, Customer, PriceList, Settings, SaleCondition } from '../types';
-import { Button, Modal, SearchableSelect, useToast } from '../components/ui';
+import { Button, Modal, SearchableSelect, useConfirm, useToast } from '../components/ui';
 import { formatCurrency } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { isConsumidorFinal } from '../lib/consumidorFinal';
@@ -63,6 +63,7 @@ export default function SaleTicketModal({
 }: SaleTicketModalProps) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { confirm } = useConfirm();
   const [mode, setMode] = useState<Mode>('view');
   const [customerId, setCustomerId] = useState('');
   const [condition, setCondition] = useState<SaleCondition>('contado');
@@ -157,7 +158,6 @@ export default function SaleTicketModal({
       const productId = value as string;
       if (productId && !hasSellablePrice(activeList, productId)) {
         toast.warning('Este producto no tiene precio en la lista del cliente.');
-        return;
       }
       item.productId = productId;
       item.unitPrice = getListedPrice(activeList, productId) ?? 0;
@@ -181,8 +181,11 @@ export default function SaleTicketModal({
       return;
     }
     if (saleHasUnsellableItems(items, editTotal)) {
-      toast.error('No se puede guardar una venta con total $ 0 o productos sin precio.');
-      return;
+      const ok = await confirm({
+        title: 'Hay productos con precio en $0. ¿Querés guardar la venta igual?',
+        confirmLabel: 'Sí, guardar',
+      });
+      if (!ok) return;
     }
 
     const resolvedCustomerId = posStyle ? sale.customerId : customerId;
@@ -379,13 +382,14 @@ export default function SaleTicketModal({
                       label: hasSellablePrice(activeList, p.id)
                         ? `${p.name} (${getAvailableStock(p.id, sale, products)} ${p.unit} disp.)`
                         : `${p.name} — Sin precio`,
-                      isDisabled: item.productId !== p.id && !hasSellablePrice(activeList, p.id),
                     }))}
                     value={
                       item.productId
                         ? {
                             value: item.productId,
-                            label: `${products.find((p) => p.id === item.productId)?.name} (${getAvailableStock(item.productId, sale, products)} disp.)`,
+                            label: hasSellablePrice(activeList, item.productId)
+                              ? `${products.find((p) => p.id === item.productId)?.name} (${getAvailableStock(item.productId, sale, products)} disp.)`
+                              : `${products.find((p) => p.id === item.productId)?.name} — Sin precio`,
                           }
                         : null
                     }
@@ -454,7 +458,7 @@ export default function SaleTicketModal({
             <Button type="button" variant="secondary" onClick={onClose}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={submitting || saleHasUnsellableItems(items, editTotal)}>
+            <Button type="submit" disabled={submitting}>
               Guardar cambios
             </Button>
           </div>

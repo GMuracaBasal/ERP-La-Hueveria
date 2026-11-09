@@ -126,6 +126,7 @@ export default function PriceLists() {
 
   const pricedRowsFor = (list: PriceList) =>
     Object.entries(list.prices)
+      .filter(([, price]) => typeof price === 'number' && price > 0)
       .map(([productId, price]) => ({
         id: productId,
         name: products.find((p) => p.id === productId)?.name,
