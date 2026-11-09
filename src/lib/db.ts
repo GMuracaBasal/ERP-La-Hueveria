@@ -28,10 +28,12 @@ const mapProductToDB = (p: Product) => ({
 const mapCustomerFromDB = (r: any): Customer => ({
   id: r.id, name: r.name, phone: r.phone, email: r.email,
   address: r.address, priceListId: r.price_list_id, notes: r.notes,
+  cuit: r.cuit ?? null, contactName: r.contact_name ?? null,
 });
 const mapCustomerToDB = (c: Customer) => ({
   id: c.id, name: c.name, phone: c.phone, email: c.email,
   address: c.address, price_list_id: c.priceListId, notes: c.notes,
+  cuit: c.cuit ?? null, contact_name: c.contactName ?? null,
 });
 
 const mapUserFromDB = (r: any): User => ({
@@ -73,7 +75,16 @@ const mapFinanceToDB = (m: FinanceMovement) => ({
   voided: m.voided ?? false,
 });
 
-const mapSupplierToDB = (s: Supplier) => ({ ...s });
+const mapSupplierFromDB = (r: any): Supplier => ({
+  id: r.id, name: r.name, phone: r.phone, email: r.email,
+  address: r.address, notes: r.notes,
+  cuit: r.cuit ?? null, contactName: r.contact_name ?? null,
+});
+const mapSupplierToDB = (s: Supplier) => ({
+  id: s.id, name: s.name, phone: s.phone, email: s.email,
+  address: s.address, notes: s.notes,
+  cuit: s.cuit ?? null, contact_name: s.contactName ?? null,
+});
 
 const mapAccountMovementFromDB = (r: any): AccountMovement => ({
   id: r.id,
@@ -149,7 +160,7 @@ function simpleCRUD<T extends { id: string }>(
 
 export const usersDB     = simpleCRUD<User>('users', mapUserFromDB, mapUserToDB);
 export const productsDB  = simpleCRUD<Product>('products', mapProductFromDB, mapProductToDB);
-export const suppliersDB = simpleCRUD<Supplier>('suppliers', undefined, mapSupplierToDB);
+export const suppliersDB = simpleCRUD<Supplier>('suppliers', mapSupplierFromDB, mapSupplierToDB);
 export const customersDB = simpleCRUD<Customer>('customers', mapCustomerFromDB, mapCustomerToDB);
 export const inventoryDB = {
   ...simpleCRUD<InventoryMovement>('inventory_movements', mapInventoryFromDB, mapInventoryToDB),

@@ -36,6 +36,8 @@ export interface Supplier {
   email: string;
   address: string;
   notes: string;
+  cuit?: string | null;
+  contactName?: string | null;
 }
 
 export interface Customer {
@@ -46,6 +48,8 @@ export interface Customer {
   address: string;
   priceListId: string | null;
   notes: string;
+  cuit?: string | null;
+  contactName?: string | null;
 }
 
 export interface PurchaseItem {

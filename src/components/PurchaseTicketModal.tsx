@@ -105,7 +105,8 @@ export default function PurchaseTicketModal({
     party: {
       sectionTitle: 'PROVEEDOR',
       name: supplierName || '—',
-      taxId: null,
+      taxId: supplier?.cuit || null,
+      contactName: supplier?.contactName || null,
       address: supplier?.address || null,
       phone: supplier?.phone || null,
       invoiceNumber: purchase.invoiceNumber || null,

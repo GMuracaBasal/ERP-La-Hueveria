@@ -122,7 +122,8 @@ export default function SaleTicketModal({
     party: {
       sectionTitle: 'DESTINATARIO',
       name: customerName,
-      taxId: null,
+      taxId: customer?.cuit || null,
+      contactName: customer?.contactName || null,
       address: customer?.address || null,
       phone: customer?.phone || null,
     },
