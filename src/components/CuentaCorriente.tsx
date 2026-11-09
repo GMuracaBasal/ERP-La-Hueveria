@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
+import { Printer } from 'lucide-react';
 import type { AccountMovement, AccountPartyType } from '../types';
 import { Badge, Button, Modal, useConfirm, useToast } from './ui';
 import { formatCurrency, formatFechaHora } from '../lib/utils';
-import { computeBalance, withRunningBalance } from '../lib/accountMovements';
-import { accountMovementsDB, paymentsDB } from '../lib/db';
+import { computeBalance, withRunningBalance, type AccountMovementRow } from '../lib/accountMovements';
+import { accountMovementsDB, customersDB, db, paymentsDB, suppliersDB } from '../lib/db';
+import { paymentMethodLabel } from '../lib/paymentMethods';
 import { useAuth } from '../contexts/AuthContext';
+import ReciboModal, { type ReciboModalProps } from './ReciboModal';
 
 interface CuentaCorrienteProps {
   movements: AccountMovement[];
@@ -56,6 +59,7 @@ export default function CuentaCorriente({
   const [voidReason, setVoidReason] = useState('');
   const [voidError, setVoidError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [recibo, setRecibo] = useState<Omit<ReciboModalProps, 'isOpen' | 'onClose'> | null>(null);
 
   const refBadge = (m: AccountMovement) => {
     if (m.voided) return null;
@@ -115,6 +119,53 @@ export default function CuentaCorriente({
     setVoidTarget(m);
     setVoidReason('');
     setVoidError('');
+  };
+
+  const openRecibo = async (m: AccountMovementRow) => {
+    const partyId = partyType === 'customer' ? m.customerId : m.supplierId;
+    if (!partyId) {
+      toast.error('No se encontró el titular de este movimiento.');
+      return;
+    }
+
+    try {
+      const [titular, payment, settings] = await Promise.all([
+        partyType === 'customer' ? customersDB.getById(partyId) : suppliersDB.getById(partyId),
+        m.referenceId ? paymentsDB.getById(m.referenceId) : Promise.resolve(undefined),
+        db.getSettings(),
+      ]);
+      if (!titular) {
+        toast.error('No se encontraron los datos del titular.');
+        return;
+      }
+
+      const amount = payment?.amount ?? (m.haber > 0 ? m.haber : m.debe);
+      const docType = m.referenceType === 'pago' ? 'recibo_pago' as const : 'recibo_cobro' as const;
+
+      setRecibo({
+        docType,
+        documentNumber: payment?.id || m.referenceId || m.id,
+        date: payment?.date || m.date,
+        businessName: settings.businessName || 'La Huevería',
+        party: {
+          sectionTitle: docType === 'recibo_pago' ? 'PROVEEDOR' : 'DESTINATARIO',
+          name: titular.name,
+          taxId: titular.cuit || null,
+          contactName: titular.contactName || null,
+          address: titular.address || null,
+          phone: titular.phone || null,
+        },
+        payment: {
+          paymentMethod: paymentMethodLabel(payment?.paymentMethod),
+          concept: payment?.concept || m.concept,
+          amount,
+          balanceAfter: m.runningBalance,
+        },
+        voided: m.voided || !!payment?.voided,
+      });
+    } catch {
+      toast.error('No se pudo armar el recibo. Intentá de nuevo.');
+    }
   };
 
   const handleVoidPayment = async () => {
@@ -235,22 +286,35 @@ export default function CuentaCorriente({
                     {formatCurrency(m.runningBalance)}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {canVoidFromBook(m) && (
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        onClick={() => openVoid(m)}
-                      >
-                        Anular
-                      </Button>
-                    )}
-                    {!m.voided &&
-                      (m.referenceType === 'venta' ||
-                        m.referenceType === 'compra' ||
-                        ((m.referenceType === 'cobro' || m.referenceType === 'pago') &&
-                          !isStandalonePayment(m, movements))) && (
-                        <span className="text-xs text-brand-muted italic">Desde el comprobante</span>
+                    <div className="inline-flex items-center justify-end gap-1">
+                      {isStandalonePayment(m, movements) && (
+                        <button
+                          type="button"
+                          title="Imprimir recibo"
+                          aria-label="Imprimir recibo"
+                          className="p-1.5 rounded-lg text-gray-400 hover:bg-brand-durazno/60 hover:text-brand-navy transition-colors"
+                          onClick={() => openRecibo(m)}
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
                       )}
+                      {canVoidFromBook(m) && (
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          onClick={() => openVoid(m)}
+                        >
+                          Anular
+                        </Button>
+                      )}
+                      {!m.voided &&
+                        (m.referenceType === 'venta' ||
+                          m.referenceType === 'compra' ||
+                          ((m.referenceType === 'cobro' || m.referenceType === 'pago') &&
+                            !isStandalonePayment(m, movements))) && (
+                          <span className="text-xs text-brand-muted italic">Desde el comprobante</span>
+                        )}
+                    </div>
                   </td>
                 </tr>
               );
@@ -297,6 +361,14 @@ export default function CuentaCorriente({
           </div>
         </div>
       </Modal>
+
+      {recibo && (
+        <ReciboModal
+          isOpen
+          onClose={() => setRecibo(null)}
+          {...recibo}
+        />
+      )}
     </div>
   );
 }

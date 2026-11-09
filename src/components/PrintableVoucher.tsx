@@ -2,7 +2,7 @@ import React from 'react';
 import { Egg } from 'lucide-react';
 import { formatCurrency, formatFecha } from '../lib/utils';
 
-export type VoucherDocType = 'venta' | 'compra';
+export type VoucherDocType = 'venta' | 'compra' | 'recibo_cobro' | 'recibo_pago';
 
 export interface VoucherLineItem {
   productName: string;
@@ -12,7 +12,7 @@ export interface VoucherLineItem {
 }
 
 export interface VoucherParty {
-  /** DESTINATARIO (venta) o PROVEEDOR (compra) */
+  /** DESTINATARIO (venta / cobro) o PROVEEDOR (compra / pago) */
   sectionTitle: string;
   name: string;
   /** Si no hay CUIT/CUIL en el sistema, mostrar "S/D". */
@@ -31,6 +31,14 @@ export interface VoucherCommercial {
   pointOfSale?: string | null;
 }
 
+/** Detalle de un cobro/pago autónomo (sin tabla de ítems). */
+export interface VoucherPayment {
+  paymentMethod: string;
+  concept?: string | null;
+  amount: number;
+  balanceAfter?: number | null;
+}
+
 export interface PrintableVoucherProps {
   docType: VoucherDocType;
   documentNumber: string;
@@ -39,9 +47,10 @@ export interface PrintableVoucherProps {
   businessTagline?: string;
   businessAddress?: string | null;
   party: VoucherParty;
-  commercial: VoucherCommercial;
-  items: VoucherLineItem[];
-  total: number;
+  commercial?: VoucherCommercial;
+  items?: VoucherLineItem[];
+  total?: number;
+  payment?: VoucherPayment;
   voided?: boolean;
   className?: string;
 }
@@ -49,10 +58,16 @@ export interface PrintableVoucherProps {
 const DOC_TITLE: Record<VoucherDocType, string> = {
   venta: 'COMPROBANTE DE VENTA',
   compra: 'COMPROBANTE DE COMPRA',
+  recibo_cobro: 'RECIBO DE COBRO',
+  recibo_pago: 'COMPROBANTE DE PAGO',
 };
 
+function isReceiptType(docType: VoucherDocType): boolean {
+  return docType === 'recibo_cobro' || docType === 'recibo_pago';
+}
+
 /**
- * Comprobante formal A4 (venta / compra).
+ * Comprobante formal A4 (venta / compra / recibo).
  * Misma maqueta en vista previa e impresión — solo presentación.
  */
 export default function PrintableVoucher({
@@ -64,13 +79,20 @@ export default function PrintableVoucher({
   businessAddress,
   party,
   commercial,
-  items,
-  total,
+  items = [],
+  total = 0,
+  payment,
   voided = false,
   className = '',
 }: PrintableVoucherProps) {
+  const isReceipt = isReceiptType(docType);
   const itemsQty = items.reduce((acc, i) => acc + i.quantity, 0);
   const shortNumber = documentNumber.slice(0, 8).toUpperCase();
+  const legalLine = isReceipt
+    ? docType === 'recibo_cobro'
+      ? `Recibí de ${party.name} la suma indicada.`
+      : 'Recibí de La Huevería la suma indicada.'
+    : 'Documento no válido como factura';
 
   return (
     <div className={`printable-voucher ${className}`.trim()}>
@@ -137,75 +159,133 @@ export default function PrintableVoucher({
             </div>
           ) : null}
         </div>
-        <div className="pv-meta-col pv-meta-col--right">
-          <h3 className="pv-section-title">Información comercial</h3>
-          <div className="pv-party-line">
-            <span className="pv-label">Condición:</span> {commercial.condition}
-          </div>
-          <div className="pv-party-line">
-            <span className="pv-label">Medio de pago:</span> {commercial.paymentMethod}
-          </div>
-          {commercial.pointOfSale ? (
+        {!isReceipt && commercial ? (
+          <div className="pv-meta-col pv-meta-col--right">
+            <h3 className="pv-section-title">Información comercial</h3>
             <div className="pv-party-line">
-              <span className="pv-label">Punto de venta:</span> {commercial.pointOfSale}
+              <span className="pv-label">Condición:</span> {commercial.condition}
             </div>
-          ) : null}
-        </div>
+            <div className="pv-party-line">
+              <span className="pv-label">Medio de pago:</span> {commercial.paymentMethod}
+            </div>
+            {commercial.pointOfSale ? (
+              <div className="pv-party-line">
+                <span className="pv-label">Punto de venta:</span> {commercial.pointOfSale}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
-      <table className="pv-table">
-        <thead>
-          <tr>
-            <th className="pv-col-product">Producto</th>
-            <th className="pv-col-qty">Cantidad</th>
-            <th className="pv-col-price">Precio Unit.</th>
-            <th className="pv-col-sub">Subtotal</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item, idx) => (
-            <tr key={idx}>
-              <td className="pv-col-product">{item.productName}</td>
-              <td className="pv-col-qty">{item.quantity}</td>
-              <td className="pv-col-price">{formatCurrency(item.unitPrice)}</td>
-              <td className="pv-col-sub">{formatCurrency(item.subtotal)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {isReceipt && payment ? (
+        <section className="pv-payment">
+          <h3 className="pv-section-title">Detalle del movimiento</h3>
+          <div className="pv-payment-line">
+            <span className="pv-label">Medio de pago:</span> {payment.paymentMethod}
+          </div>
+          {payment.concept?.trim() ? (
+            <div className="pv-payment-line">
+              <span className="pv-label">Concepto:</span> {payment.concept}
+            </div>
+          ) : null}
+          <div className="pv-totals">
+            <div className="pv-totals-left">
+              {payment.balanceAfter != null ? (
+                <span className="pv-items-summary">
+                  Saldo pendiente luego de este movimiento:{' '}
+                  <strong className={voided ? 'pv-struck' : undefined}>
+                    {formatCurrency(payment.balanceAfter)}
+                  </strong>
+                </span>
+              ) : null}
+            </div>
+            <div className="pv-totals-right">
+              <div className="pv-total-row">
+                <span>IMPORTE</span>
+                <span className={voided ? 'pv-struck' : undefined}>
+                  {formatCurrency(payment.amount)}
+                </span>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : (
+        <>
+          <table className="pv-table">
+            <thead>
+              <tr>
+                <th className="pv-col-product">Producto</th>
+                <th className="pv-col-qty">Cantidad</th>
+                <th className="pv-col-price">Precio Unit.</th>
+                <th className="pv-col-sub">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, idx) => (
+                <tr key={idx}>
+                  <td className="pv-col-product">{item.productName}</td>
+                  <td className="pv-col-qty">{item.quantity}</td>
+                  <td className="pv-col-price">{formatCurrency(item.unitPrice)}</td>
+                  <td className="pv-col-sub">{formatCurrency(item.subtotal)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
 
-      <div className="pv-totals">
-        <div className="pv-totals-left">
-          <span className="pv-items-summary">
-            {items.length} {items.length === 1 ? 'ítem' : 'ítems'}
-            {' · '}
-            {itemsQty} u. en total
-          </span>
-        </div>
-        <div className="pv-totals-right">
-          <div className="pv-subtotal-row">
-            <span>SUBTOTAL</span>
-            <span className={voided ? 'pv-struck' : undefined}>{formatCurrency(total)}</span>
+          <div className="pv-totals">
+            <div className="pv-totals-left">
+              <span className="pv-items-summary">
+                {items.length} {items.length === 1 ? 'ítem' : 'ítems'}
+                {' · '}
+                {itemsQty} u. en total
+              </span>
+            </div>
+            <div className="pv-totals-right">
+              <div className="pv-subtotal-row">
+                <span>SUBTOTAL</span>
+                <span className={voided ? 'pv-struck' : undefined}>{formatCurrency(total)}</span>
+              </div>
+              <div className="pv-total-row">
+                <span>TOTAL</span>
+                <span className={voided ? 'pv-struck' : undefined}>{formatCurrency(total)}</span>
+              </div>
+            </div>
           </div>
-          <div className="pv-total-row">
-            <span>TOTAL</span>
-            <span className={voided ? 'pv-struck' : undefined}>{formatCurrency(total)}</span>
-          </div>
-        </div>
-      </div>
+        </>
+      )}
 
       <footer className="pv-footer">
         <div className="pv-signatures">
-          <div className="pv-sign">
-            <div className="pv-sign-line" />
-            <div className="pv-sign-label">FIRMA DEL RECEPTOR / Aclaración y DNI</div>
-          </div>
-          <div className="pv-sign">
-            <div className="pv-sign-line" />
-            <div className="pv-sign-label">POR LA HUEVERÍA</div>
-          </div>
+          {docType === 'recibo_cobro' ? (
+            <>
+              <div className="pv-sign" />
+              <div className="pv-sign">
+                <div className="pv-sign-line" />
+                <div className="pv-sign-label">FIRMA Y SELLO · LA HUEVERÍA</div>
+              </div>
+            </>
+          ) : docType === 'recibo_pago' ? (
+            <>
+              <div className="pv-sign">
+                <div className="pv-sign-line" />
+                <div className="pv-sign-label">FIRMA DEL PROVEEDOR / Aclaración y DNI</div>
+              </div>
+              <div className="pv-sign" />
+            </>
+          ) : (
+            <>
+              <div className="pv-sign">
+                <div className="pv-sign-line" />
+                <div className="pv-sign-label">FIRMA DEL RECEPTOR / Aclaración y DNI</div>
+              </div>
+              <div className="pv-sign">
+                <div className="pv-sign-line" />
+                <div className="pv-sign-label">POR LA HUEVERÍA</div>
+              </div>
+            </>
+          )}
         </div>
-        <p className="pv-legal">Documento no válido como factura</p>
+        <p className="pv-legal">{legalLine}</p>
       </footer>
     </div>
   );

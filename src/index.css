@@ -443,6 +443,16 @@ body {
   white-space: nowrap;
 }
 
+.printable-voucher .pv-payment {
+  margin-top: 4px;
+}
+
+.printable-voucher .pv-payment-line {
+  font-size: 11px;
+  color: var(--pv-text);
+  margin: 4px 0;
+}
+
 .printable-voucher .pv-totals {
   display: flex;
   justify-content: space-between;
