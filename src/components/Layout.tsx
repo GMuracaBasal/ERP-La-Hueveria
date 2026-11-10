@@ -115,7 +115,7 @@ export default function Layout() {
             const accessibleSections = mod.sections.filter((s) => user && canAccess(user, s.id));
             const moduleActive = accessibleSections.some((s) => isPathActive(s.path));
             // Módulo con sub-secciones en la definición → accordion; un solo destino → navega
-            const collapsible = mod.sections.length > 1;
+            const collapsible = accessibleSections.length > 1;
 
             return (
               <SidebarModuleGroup

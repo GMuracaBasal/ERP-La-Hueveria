@@ -4,6 +4,8 @@ export interface SectionDef {
   id: string;
   label: string;
   path: string;
+  /** No se asigna a vendedores; solo admin. */
+  adminOnly?: boolean;
 }
 
 export interface ModuleDef {
@@ -82,6 +84,7 @@ export const MODULES: ModuleDef[] = [
     icon: 'finanzas',
     sections: [
       { id: 'finanzas-dashboard', label: 'Dashboard', path: '/finanzas' },
+      { id: 'finanzas-cuentas', label: 'Cuentas', path: '/finanzas/cuentas', adminOnly: true },
     ],
   },
   {
@@ -119,6 +122,7 @@ export function canAccess(user: User, sectionId: string): boolean {
   if (user.role === 'admin') return true;
   const section = getSectionById(sectionId);
   if (!section) return false;
+  if (section.adminOnly) return false;
   const mod = MODULES.find((m) => m.sections.some((s) => s.id === sectionId));
   if (mod?.adminOnly) return false;
   return normalizeSectionIds(user.modules).includes(sectionId);
@@ -149,7 +153,13 @@ export function firstAllowedPath(user: User): string {
 
 /** Secciones asignables a vendedores (agrupadas por módulo, sin adminOnly). */
 export function assignableModules(): ModuleDef[] {
-  return MODULES.filter((m) => !m.adminOnly);
+  return MODULES
+    .filter((m) => !m.adminOnly)
+    .map((m) => ({
+      ...m,
+      sections: m.sections.filter((s) => !s.adminOnly),
+    }))
+    .filter((m) => m.sections.length > 0);
 }
 
 /** Default de permisos para un vendedor nuevo. */

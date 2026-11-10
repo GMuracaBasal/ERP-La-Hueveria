@@ -4,7 +4,7 @@ import {
   User, Product, PriceList, Supplier, Customer,
   Purchase, Sale, InventoryMovement, FinanceMovement, Settings,
   AccountMovement, PointOfSale, SaleCondition, PurchaseCondition,
-  Payment, PaymentType,
+  Payment, PaymentType, TreasuryAccount, TreasuryTransfer,
 } from '../types';
 import { roundMoney } from './accountMovements';
 import {
@@ -67,6 +67,9 @@ const mapFinanceFromDB = (r: any): FinanceMovement => ({
   paymentMethod: normalizePaymentMethod(r.payment_method) ?? r.payment_method ?? undefined,
   amount: Number(r.amount), referenceId: r.reference_id,
   voided: r.voided ?? false,
+  accountId: r.account_id ?? null,
+  transferId: r.transfer_id ?? null,
+  createdAt: r.created_at ?? undefined,
 });
 const mapFinanceToDB = (m: FinanceMovement) => ({
   id: m.id, date: m.date, type: m.type, concept: m.concept,
@@ -177,6 +180,142 @@ export const financeDB = {
     const { data, error } = await supabase.from('finance_movements').select('*').eq('voided', false);
     if (error) throw error;
     return (data ?? []).map(mapFinanceFromDB);
+  },
+  /** Libro de una cuenta (incluye anulados para mostrarlos tachados). */
+  async getByAccount(accountId: string): Promise<FinanceMovement[]> {
+    const { data, error } = await supabase
+      .from('finance_movements')
+      .select('*')
+      .eq('account_id', accountId);
+    if (error) throw error;
+    return (data ?? []).map(mapFinanceFromDB);
+  },
+};
+
+const mapTreasuryAccountFromDB = (r: any): TreasuryAccount => ({
+  id: r.id,
+  name: r.name,
+  type: r.type,
+  bank: r.bank ?? null,
+  accountNumber: r.account_number ?? null,
+  currency: r.currency === 'USD' ? 'USD' : 'ARS',
+  initialBalance: Number(r.initial_balance),
+  openingDate: r.opening_date,
+  isDefault: !!r.is_default,
+  enabled: r.enabled !== false,
+  notes: r.notes ?? null,
+  createdAt: r.created_at,
+  createdBy: r.created_by ?? null,
+});
+
+const mapTreasuryAccountToDB = (a: TreasuryAccount) => ({
+  id: a.id,
+  name: a.name,
+  type: a.type,
+  bank: a.bank,
+  account_number: a.accountNumber,
+  currency: a.currency,
+  initial_balance: a.initialBalance,
+  opening_date: a.openingDate,
+  is_default: a.isDefault,
+  enabled: a.enabled,
+  notes: a.notes,
+  created_by: a.createdBy,
+});
+
+export const treasuryAccountsDB = {
+  async getAll(): Promise<TreasuryAccount[]> {
+    const { data, error } = await supabase
+      .from('treasury_accounts')
+      .select('*')
+      .order('currency', { ascending: true })
+      .order('name', { ascending: true });
+    if (error) throw error;
+    return (data ?? []).map(mapTreasuryAccountFromDB);
+  },
+  async getById(id: string): Promise<TreasuryAccount | undefined> {
+    const { data, error } = await supabase
+      .from('treasury_accounts')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? mapTreasuryAccountFromDB(data) : undefined;
+  },
+  async save(account: TreasuryAccount): Promise<void> {
+    if (account.isDefault) {
+      const { error: unsetErr } = await supabase
+        .from('treasury_accounts')
+        .update({ is_default: false })
+        .neq('id', account.id)
+        .eq('is_default', true);
+      if (unsetErr) throw unsetErr;
+    }
+    const { error } = await supabase.from('treasury_accounts').upsert(mapTreasuryAccountToDB(account));
+    if (error) throw error;
+  },
+};
+
+const mapTreasuryTransferFromDB = (r: any): TreasuryTransfer => ({
+  id: r.id,
+  date: r.date,
+  fromAccountId: r.from_account_id,
+  toAccountId: r.to_account_id,
+  amountFrom: Number(r.amount_from),
+  amountTo: Number(r.amount_to),
+  concept: r.concept ?? null,
+  createdBy: r.created_by ?? null,
+  createdAt: r.created_at,
+  voided: !!r.voided,
+  voidedAt: r.voided_at ?? null,
+  voidedBy: r.voided_by ?? null,
+  voidReason: r.void_reason ?? null,
+});
+
+export const treasuryTransfersDB = {
+  async getById(id: string): Promise<TreasuryTransfer | undefined> {
+    const { data, error } = await supabase
+      .from('treasury_transfers')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? mapTreasuryTransferFromDB(data) : undefined;
+  },
+
+  async register(params: {
+    date: string;
+    fromAccountId: string;
+    toAccountId: string;
+    amountFrom: number;
+    amountTo: number;
+    concept?: string | null;
+    createdBy: string;
+  }): Promise<string> {
+    const { data, error } = await supabase.rpc('register_treasury_transfer', {
+      p_date: params.date,
+      p_from_account_id: params.fromAccountId,
+      p_to_account_id: params.toAccountId,
+      p_amount_from: params.amountFrom,
+      p_amount_to: params.amountTo,
+      p_concept: params.concept?.trim() || null,
+      p_created_by: params.createdBy,
+    });
+    if (!error) return data as string;
+    if (!isMissingRpcError(error)) throw error;
+    return createTreasuryTransferClientSide(params);
+  },
+
+  async void(transferId: string, userId: string, reason: string): Promise<void> {
+    if (!reason.trim()) throw new Error('REASON_REQUIRED');
+    const { error } = await supabase.rpc('void_treasury_transfer', {
+      p_transfer_id: transferId,
+      p_user_id: userId,
+      p_reason: reason.trim(),
+    });
+    if (!error) return;
+    if (!isMissingRpcError(error)) throw error;
+    await voidTreasuryTransferClientSide(transferId, userId, reason.trim());
   },
 };
 
@@ -1236,8 +1375,123 @@ function isMissingRpcError(error: { code?: string; message?: string } | null): b
     error.code === 'PGRST202' ||
     !!error.message?.includes('Could not find the function') ||
     !!error.message?.includes('register_payment') ||
-    !!error.message?.includes('void_payment')
+    !!error.message?.includes('void_payment') ||
+    !!error.message?.includes('register_treasury_transfer') ||
+    !!error.message?.includes('void_treasury_transfer')
   );
+}
+
+async function createTreasuryTransferClientSide(params: {
+  date: string;
+  fromAccountId: string;
+  toAccountId: string;
+  amountFrom: number;
+  amountTo: number;
+  concept?: string | null;
+  createdBy: string;
+}): Promise<string> {
+  const transferId = generateId();
+  const fromAcc = await treasuryAccountsDB.getById(params.fromAccountId);
+  const toAcc = await treasuryAccountsDB.getById(params.toAccountId);
+  if (!fromAcc || !toAcc) throw new Error('ACCOUNTS_REQUIRED');
+  if (params.fromAccountId === params.toAccountId) throw new Error('SAME_ACCOUNT');
+  if (!fromAcc.enabled || !toAcc.enabled) throw new Error('FROM_ACCOUNT_DISABLED');
+  const amountFrom = roundMoney(params.amountFrom);
+  const amountTo = roundMoney(params.amountTo);
+  if (!(amountFrom > 0) || !(amountTo > 0)) throw new Error('INVALID_AMOUNT');
+  if (fromAcc.currency === toAcc.currency && amountFrom !== amountTo) {
+    throw new Error('AMOUNTS_MUST_MATCH');
+  }
+
+  const custom = params.concept?.trim() || '';
+  const fromConcept = custom
+    ? `Transferencia a ${toAcc.name} — ${custom}`
+    : `Transferencia a ${toAcc.name}`;
+  const toConcept = custom
+    ? `Transferencia de ${fromAcc.name} — ${custom}`
+    : `Transferencia de ${fromAcc.name}`;
+
+  try {
+    const { error: tErr } = await supabase.from('treasury_transfers').insert({
+      id: transferId,
+      date: params.date,
+      from_account_id: params.fromAccountId,
+      to_account_id: params.toAccountId,
+      amount_from: amountFrom,
+      amount_to: amountTo,
+      concept: custom || null,
+      created_by: params.createdBy,
+      voided: false,
+    });
+    if (tErr) throw tErr;
+
+    const { error: eErr } = await supabase.from('finance_movements').insert({
+      id: generateId(),
+      date: params.date,
+      type: 'egreso',
+      concept: fromConcept,
+      payment_method: 'transferencia',
+      amount: amountFrom,
+      reference_id: transferId,
+      account_id: params.fromAccountId,
+      transfer_id: transferId,
+      voided: false,
+    });
+    if (eErr) throw eErr;
+
+    const { error: iErr } = await supabase.from('finance_movements').insert({
+      id: generateId(),
+      date: params.date,
+      type: 'ingreso',
+      concept: toConcept,
+      payment_method: 'transferencia',
+      amount: amountTo,
+      reference_id: transferId,
+      account_id: params.toAccountId,
+      transfer_id: transferId,
+      voided: false,
+    });
+    if (iErr) throw iErr;
+
+    return transferId;
+  } catch (err) {
+    await supabase.from('finance_movements').delete().eq('transfer_id', transferId);
+    await supabase.from('treasury_transfers').delete().eq('id', transferId);
+    throw err;
+  }
+}
+
+async function voidTreasuryTransferClientSide(transferId: string, userId: string, reason: string): Promise<void> {
+  const transfer = await treasuryTransfersDB.getById(transferId);
+  if (!transfer) throw new Error('TRANSFER_NOT_FOUND');
+  if (transfer.voided) throw new Error('TRANSFER_ALREADY_VOIDED');
+  if (!reason.trim()) throw new Error('REASON_REQUIRED');
+
+  const now = new Date().toISOString();
+  const { error: tErr } = await supabase
+    .from('treasury_transfers')
+    .update({
+      voided: true,
+      voided_at: now,
+      voided_by: userId,
+      void_reason: reason.trim(),
+    })
+    .eq('id', transferId)
+    .eq('voided', false);
+  if (tErr) throw tErr;
+
+  const { error: fErr } = await supabase
+    .from('finance_movements')
+    .update({ voided: true })
+    .eq('transfer_id', transferId)
+    .eq('voided', false);
+  if (fErr) {
+    await supabase
+      .from('treasury_transfers')
+      .update({ voided: false, voided_at: null, voided_by: null, void_reason: null })
+      .eq('id', transferId);
+    throw fErr;
+  }
 }
 
 /** Compensación si falla a mitad en el fallback sin RPC. */

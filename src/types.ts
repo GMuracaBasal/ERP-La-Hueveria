@@ -139,6 +139,46 @@ export interface FinanceMovement {
   amount: number;
   referenceId?: string;
   voided?: boolean;
+  /** Cuenta de tesorería. Null solo si la migración aún no corrió. */
+  accountId?: string | null;
+  /** Presente cuando el movimiento es una pata de transferencia. */
+  transferId?: string | null;
+  createdAt?: string;
+}
+
+export type TreasuryAccountType = 'efectivo' | 'banco' | 'billetera' | 'otra';
+export type TreasuryCurrency = 'ARS' | 'USD';
+
+export interface TreasuryAccount {
+  id: string;
+  name: string;
+  type: TreasuryAccountType;
+  bank: string | null;
+  accountNumber: string | null;
+  currency: TreasuryCurrency;
+  initialBalance: number;
+  openingDate: string;
+  isDefault: boolean;
+  enabled: boolean;
+  notes: string | null;
+  createdAt: string;
+  createdBy: string | null;
+}
+
+export interface TreasuryTransfer {
+  id: string;
+  date: string;
+  fromAccountId: string;
+  toAccountId: string;
+  amountFrom: number;
+  amountTo: number;
+  concept: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  voided: boolean;
+  voidedAt: string | null;
+  voidedBy: string | null;
+  voidReason?: string | null;
 }
 
 export type AccountReferenceType = 'venta' | 'compra' | 'cobro' | 'pago' | 'ajuste';
