@@ -1,4 +1,4 @@
-/** Códigos canónicos de medio de pago (sin cheque). Un solo vocabulario en todo el ERP. */
+/** Códigos canónicos de medio de pago que entran o salen de una cuenta. El cheque recibido es aparte: no es plata hasta acreditar. */
 export type PaymentMethodCode = 'efectivo' | 'transferencia' | 'tarjeta' | 'qr';
 
 export const PAYMENT_METHOD_OPTIONS: { value: PaymentMethodCode; label: string }[] = [
@@ -6,6 +6,12 @@ export const PAYMENT_METHOD_OPTIONS: { value: PaymentMethodCode; label: string }
   { value: 'transferencia', label: 'Transferencia' },
   { value: 'tarjeta', label: 'Tarjeta' },
   { value: 'qr', label: 'QR' },
+];
+
+/** Cobro a cliente: los medios de siempre, más el cheque que queda en cartera. */
+export const COLLECTION_PAYMENT_OPTIONS: { value: PaymentMethodCode | 'cheque'; label: string }[] = [
+  ...PAYMENT_METHOD_OPTIONS,
+  { value: 'cheque', label: 'Cheque' },
 ];
 
 /** Medios del POS / Caja del día (mostrador). */
@@ -54,13 +60,14 @@ export function normalizePaymentMethod(
 
 export function paymentMethodLabel(code: PaymentMethodCode | string | null | undefined): string {
   if (code == null || code === '') return '—';
+  if (code === 'cheque' || code === 'Cheque') return 'Cheque';
   const normalized = normalizePaymentMethod(code) ?? code;
   return PAYMENT_METHOD_OPTIONS.find((o) => o.value === normalized)?.label ?? String(normalized);
 }
 
 export function defaultPaymentConcept(
   type: 'cobro' | 'pago',
-  method: PaymentMethodCode,
+  method: PaymentMethodCode | 'cheque',
 ): string {
   const label = paymentMethodLabel(method);
   return type === 'cobro' ? `Cobro - ${label}` : `Pago - ${label}`;

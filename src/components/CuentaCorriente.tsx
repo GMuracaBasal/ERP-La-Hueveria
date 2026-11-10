@@ -6,6 +6,7 @@ import { formatCurrency, formatFechaHora } from '../lib/utils';
 import { computeBalance, withRunningBalance, type AccountMovementRow } from '../lib/accountMovements';
 import { accountMovementsDB, customersDB, db, paymentsDB, suppliersDB } from '../lib/db';
 import { paymentMethodLabel } from '../lib/paymentMethods';
+import { getReceivedCheckErrorMessage } from '../lib/checks';
 import { useAuth } from '../contexts/AuthContext';
 import ReciboModal, { type ReciboModalProps } from './ReciboModal';
 
@@ -197,7 +198,7 @@ export default function CuentaCorriente({
         toast.warning('Este movimiento se anula desde el comprobante de venta/compra.');
         setVoidTarget(null);
       } else {
-        toast.error('No se pudo anular. Intentá de nuevo.');
+        toast.error(getReceivedCheckErrorMessage(err));
       }
     } finally {
       setSubmitting(false);

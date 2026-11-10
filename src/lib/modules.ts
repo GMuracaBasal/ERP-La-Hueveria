@@ -85,6 +85,7 @@ export const MODULES: ModuleDef[] = [
     sections: [
       { id: 'finanzas-dashboard', label: 'Dashboard', path: '/finanzas' },
       { id: 'finanzas-cuentas', label: 'Cuentas', path: '/finanzas/cuentas', adminOnly: true },
+      { id: 'finanzas-cheques', label: 'Cheques', path: '/finanzas/cheques' },
     ],
   },
   {

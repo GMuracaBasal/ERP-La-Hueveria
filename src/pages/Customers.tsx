@@ -4,12 +4,19 @@ import {
   customersDB,
   priceListsDB,
   productsDB,
+  receivedChecksDB,
   salesDB,
   db,
 } from '../lib/db';
-import { AccountMovement, Customer, PriceList, Product, Sale, Settings } from '../types';
+import { AccountMovement, Customer, PriceList, Product, ReceivedCheck, Sale, Settings } from '../types';
 import { Button, ActionButtons, Modal, Badge, SearchableSelect, useConfirm, useToast } from '../components/ui';
-import { formatCurrency, generateId } from '../lib/utils';
+import { formatCurrency, formatFecha, generateId } from '../lib/utils';
+import {
+  checkDueAttention,
+  checkStatusLabel,
+  checkStatusVariant,
+  getReceivedCheckErrorMessage,
+} from '../lib/checks';
 import { balancesByParty, computeBalance } from '../lib/accountMovements';
 import { isConsumidorFinal } from '../lib/consumidorFinal';
 import CuentaCorriente from '../components/CuentaCorriente';
@@ -33,6 +40,8 @@ export default function Customers() {
   const [lists, setLists] = useState<PriceList[]>([]);
   const [selected, setSelected] = useState<Customer | null>(null);
   const [movements, setMovements] = useState<AccountMovement[]>([]);
+  const [openChecks, setOpenChecks] = useState<ReceivedCheck[]>([]);
+  const [checksError, setChecksError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
   const [movModalOpen, setMovModalOpen] = useState(false);
@@ -64,6 +73,16 @@ export default function Customers() {
     }
   };
 
+  const loadChecks = async (customerId: string) => {
+    try {
+      setOpenChecks(await receivedChecksDB.listOpenByCustomer(customerId));
+      setChecksError('');
+    } catch (err) {
+      setOpenChecks([]);
+      setChecksError(getReceivedCheckErrorMessage(err));
+    }
+  };
+
   useEffect(() => {
     loadList();
     (async () => {
@@ -92,14 +111,14 @@ export default function Customers() {
 
   const openDetail = async (customer: Customer) => {
     setSelected(customer);
-    await loadBook(customer.id);
+    await Promise.all([loadBook(customer.id), loadChecks(customer.id)]);
   };
 
   const refreshDetail = async () => {
     if (!selected) return;
     const fresh = await customersDB.getById(selected.id);
     if (fresh) setSelected(fresh);
-    await loadBook(selected.id);
+    await Promise.all([loadBook(selected.id), loadChecks(selected.id)]);
     await loadList();
   };
 
@@ -151,6 +170,8 @@ export default function Customers() {
       if (selected?.id === id) {
         setSelected(null);
         setMovements([]);
+        setOpenChecks([]);
+        setChecksError('');
       }
       await loadList();
     } catch {
@@ -244,6 +265,8 @@ export default function Customers() {
             onClick={() => {
               setSelected(null);
               setMovements([]);
+              setOpenChecks([]);
+              setChecksError('');
               loadList();
             }}
             className="text-sm text-brand-muted hover:text-brand-brown mb-1"
@@ -294,6 +317,69 @@ export default function Customers() {
               </div>
             ) : null}
           </div>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-sm border border-amber-300 flex flex-col overflow-hidden">
+          <div className="px-6 py-4 border-b border-amber-200 bg-amber-50">
+            <h2 className="font-bold text-amber-950 flex items-center gap-2">
+              <span className="w-2 h-4 bg-amber-500 rounded-full" />
+              Cheques en cartera o depositados
+            </h2>
+            <p className="text-xs text-amber-900 mt-1">
+              No son plata disponible y no están en ninguna cuenta.
+            </p>
+          </div>
+          {checksError ? (
+            <p className="px-6 py-4 text-sm text-brand-danger">{checksError}</p>
+          ) : openChecks.length === 0 ? (
+            <p className="px-6 py-6 text-sm text-brand-muted italic">
+              No tiene cheques en cartera ni depositados.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="text-[10px] uppercase text-white font-bold bg-brand-navy">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Nº</th>
+                    <th className="px-4 py-3 text-left">Banco</th>
+                    <th className="px-4 py-3 text-left">Librador</th>
+                    <th className="px-4 py-3 text-right">Importe</th>
+                    <th className="px-4 py-3 text-left">Vencimiento</th>
+                    <th className="px-4 py-3 text-left">Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {openChecks.map((c) => {
+                    const attention = checkDueAttention(c);
+                    return (
+                      <tr
+                        key={c.id}
+                        className={`border-b border-gray-50 ${
+                          attention === 'overdue' ? 'bg-red-50' : attention ? 'bg-amber-50' : ''
+                        }`}
+                      >
+                        <td className="px-4 py-3 font-medium">{c.checkNumber}</td>
+                        <td className="px-4 py-3">{c.bank || '—'}</td>
+                        <td className="px-4 py-3">{c.drawerName || '—'}</td>
+                        <td className="px-4 py-3 text-right font-mono">{formatCurrency(c.amount)}</td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="inline-flex flex-wrap items-center gap-2">
+                            {formatFecha(c.dueDate)}
+                            {attention === 'overdue' && <Badge variant="danger">Vencido</Badge>}
+                            {attention === 'today' && <Badge variant="warning">Vence hoy</Badge>}
+                            {attention === 'soon' && <Badge variant="warning">Por vencer</Badge>}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge variant={checkStatusVariant(c.status)}>{checkStatusLabel(c.status)}</Badge>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <CuentaCorriente

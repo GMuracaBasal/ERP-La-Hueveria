@@ -207,8 +207,60 @@ export interface AccountMovement {
   voidedBy: string | null;
 }
 
-/** Cobro a cliente o pago a proveedor (mueve CC + caja juntos). */
+/** Cobro a cliente o pago a proveedor. Un cobro con cheque mueve la cuenta corriente y deja el cheque en cartera: no mueve tesorería. */
 export type PaymentType = 'cobro' | 'pago';
+
+export type ReceivedCheckKind = 'papel' | 'echeq';
+export type ReceivedCheckStatus =
+  | 'en_cartera'
+  | 'depositado'
+  | 'acreditado'
+  | 'rechazado'
+  | 'endosado';
+
+/** Cheque recibido de un cliente. En cartera o depositado no es plata disponible. */
+export interface ReceivedCheck {
+  id: string;
+  checkNumber: string;
+  kind: ReceivedCheckKind;
+  bank: string | null;
+  drawerName: string | null;
+  drawerTaxId: string | null;
+  amount: number;
+  issueDate: string | null;
+  dueDate: string;
+  customerId: string | null;
+  paymentId: string | null;
+  status: ReceivedCheckStatus;
+  depositAccountId: string | null;
+  depositedAt: string | null;
+  creditedAt: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+  endorsedToSupplierId: string | null;
+  endorsedAt: string | null;
+  notes: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  voided: boolean;
+  voidedAt: string | null;
+  voidedBy: string | null;
+  voidReason: string | null;
+}
+
+/** Datos del cheque al cobrar o al cargar cartera inicial. */
+export interface ReceivedCheckDraft {
+  checkNumber: string;
+  kind: ReceivedCheckKind;
+  bank?: string | null;
+  drawerName?: string | null;
+  drawerTaxId?: string | null;
+  amount: number;
+  issueDate?: string | null;
+  dueDate: string;
+  notes?: string | null;
+  customerId?: string | null;
+}
 
 export interface Payment {
   id: string;
@@ -217,9 +269,9 @@ export interface Payment {
   supplierId: string | null;
   date: string;
   amount: number;
-  /** Código: efectivo | transferencia | tarjeta | qr */
+  /** Código: efectivo | transferencia | tarjeta | qr | cheque */
   paymentMethod: string;
-  /** Cuenta ARS donde entra (cobro) o sale (pago) la plata. */
+  /** Cuenta ARS donde entra o sale la plata. Null cuando el medio es cheque (todavía no hay plata). */
   accountId?: string | null;
   concept: string | null;
   createdBy: string | null;

@@ -18,6 +18,7 @@ import Suppliers from './pages/Suppliers';
 import Users from './pages/Users';
 import PuntoDeVenta from './pages/PuntoDeVenta';
 import TreasuryAccounts from './pages/TreasuryAccounts';
+import ReceivedChecks from './pages/ReceivedChecks';
 
 function ProtectedRoute(
   { children, reqRole, sectionId }:
@@ -80,6 +81,7 @@ function AppLogic() {
         {/* Finanzas */}
         <Route path="/finanzas" element={<ProtectedRoute sectionId="finanzas-dashboard"><ModuleDashboard title="Finanzas" /></ProtectedRoute>} />
         <Route path="/finanzas/cuentas" element={<ProtectedRoute sectionId="finanzas-cuentas"><TreasuryAccounts /></ProtectedRoute>} />
+        <Route path="/finanzas/cheques" element={<ProtectedRoute sectionId="finanzas-cheques"><ReceivedChecks /></ProtectedRoute>} />
 
         {/* Usuarios (solo admin) */}
         <Route path="/usuarios" element={<ProtectedRoute reqRole="admin"><Users /></ProtectedRoute>} />

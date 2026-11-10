@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Eye, Pencil, Ban } from 'lucide-react';
 import {
   financeDB,
+  receivedChecksDB,
   treasuryAccountsDB,
   treasuryTransfersDB,
 } from '../lib/db';
@@ -9,7 +11,8 @@ import type { FinanceMovement, TreasuryAccount, TreasuryAccountType, TreasuryCur
 import { Badge, Button, Modal, SearchableSelect, useConfirm, useToast } from '../components/ui';
 import InputFecha from '../components/InputFecha';
 import FiltroFechas, { defaultDateRange, isDateInRange } from '../components/FiltroFechas';
-import { generateId, formatFecha, formatFechaHora, isoDateToTimestamp, todayISODate } from '../lib/utils';
+import { generateId, formatCurrency, formatFecha, formatFechaHora, isoDateToTimestamp, todayISODate } from '../lib/utils';
+import { getReceivedCheckErrorMessage, sumReceivedChecks } from '../lib/checks';
 import { roundMoney } from '../lib/accountMovements';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -59,6 +62,8 @@ export default function TreasuryAccounts() {
 
   const [accounts, setAccounts] = useState<TreasuryAccount[]>([]);
   const [movements, setMovements] = useState<FinanceMovement[]>([]);
+  const [portfolio, setPortfolio] = useState<number | null>(null);
+  const [portfolioError, setPortfolioError] = useState('');
   const [selected, setSelected] = useState<TreasuryAccount | null>(null);
   const [ledger, setLedger] = useState<FinanceMovement[]>([]);
   const [dateRange, setDateRange] = useState(defaultDateRange);
@@ -99,6 +104,14 @@ export default function TreasuryAccounts() {
     ]);
     setAccounts(accs);
     setMovements(movs);
+    try {
+      const checks = await receivedChecksDB.listActive();
+      setPortfolio(sumReceivedChecks(checks, 'en_cartera'));
+      setPortfolioError('');
+    } catch (err) {
+      setPortfolio(null);
+      setPortfolioError(getReceivedCheckErrorMessage(err));
+    }
     return accs;
   };
 
@@ -767,12 +780,33 @@ export default function TreasuryAccounts() {
               </span>
             ))}
           </p>
+          <p className="text-xs text-brand-muted mt-1">
+            Estos saldos son solo de las cuentas. Los cheques en cartera no están incluidos.
+          </p>
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" onClick={() => openTransfer()} disabled={enabledAccounts.length < 2}>
             Nueva Transferencia
           </Button>
           <Button onClick={openNewAccount}>Nueva Cuenta</Button>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border-2 border-dashed border-amber-500/80 bg-amber-50 px-6 py-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-bold uppercase tracking-wider text-amber-900">Cheques en cartera</div>
+          <p className="text-sm text-amber-950/80 mt-1 max-w-xl">
+            No integra el disponible. La plata entra al banco recién cuando el cheque se acredita.
+          </p>
+          {portfolioError && <p className="text-xs text-brand-danger mt-2">{portfolioError}</p>}
+        </div>
+        <div className="text-right">
+          <div className="text-2xl font-bold text-amber-950">
+            {portfolio == null ? '—' : formatCurrency(portfolio)}
+          </div>
+          <Link to="/finanzas/cheques" className="text-sm font-semibold text-brand-teja hover:underline">
+            Ver cheques
+          </Link>
         </div>
       </div>
 
