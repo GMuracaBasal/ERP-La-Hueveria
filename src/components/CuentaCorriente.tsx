@@ -41,7 +41,8 @@ export default function CuentaCorriente({
   const { user } = useAuth();
   const { confirm } = useConfirm();
   const { toast } = useToast();
-  const rows = withRunningBalance(movements, partyType);
+  // El saldo corrido se calcula de la más vieja a la más nueva; en pantalla se ve al revés.
+  const rows = withRunningBalance(movements, partyType).slice().reverse();
   const balance = computeBalance(movements, partyType);
   const balanceHint =
     partyType === 'customer'

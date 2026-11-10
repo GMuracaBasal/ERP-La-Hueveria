@@ -16,6 +16,7 @@ import {
   checkStatusLabel,
   checkStatusVariant,
   getReceivedCheckErrorMessage,
+  rpcErrorText,
 } from '../lib/checks';
 import { balancesByParty, computeBalance } from '../lib/accountMovements';
 import { isConsumidorFinal } from '../lib/consumidorFinal';
@@ -25,6 +26,8 @@ import SaleTicketModal from '../components/SaleTicketModal';
 
 const emptyForm = {
   name: '',
+  cuit: '',
+  contactName: '',
   phone: '',
   email: '',
   address: '',
@@ -125,7 +128,12 @@ export default function Customers() {
   const handleOpenModal = (item?: Customer) => {
     if (item) {
       setEditing(item);
-      setFormData({ ...item, priceListId: item.priceListId || '' });
+      setFormData({
+        ...item,
+        cuit: item.cuit || '',
+        contactName: item.contactName || '',
+        priceListId: item.priceListId || '',
+      });
     } else {
       setEditing(null);
       setFormData({ ...emptyForm, priceListId: lists[0]?.id || '' });
@@ -136,7 +144,12 @@ export default function Customers() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const dataToSave = { ...formData, priceListId: formData.priceListId || null };
+      const dataToSave = {
+        ...formData,
+        cuit: formData.cuit.trim() || null,
+        contactName: formData.contactName.trim() || null,
+        priceListId: formData.priceListId || null,
+      };
       if (editing) {
         const updated = { ...editing, ...dataToSave };
         await customersDB.save(updated);
@@ -147,8 +160,8 @@ export default function Customers() {
       toast.success(editing ? 'Cliente actualizado correctamente.' : 'Cliente creado correctamente.');
       setIsModalOpen(false);
       await loadList();
-    } catch {
-      toast.error('No se pudo completar la operación. Intentá de nuevo.');
+    } catch (err) {
+      toast.error(rpcErrorText(err) || 'Supabase no devolvió el motivo del error.');
     }
   };
 
@@ -174,8 +187,8 @@ export default function Customers() {
         setChecksError('');
       }
       await loadList();
-    } catch {
-      toast.error('No se pudo completar la operación. Intentá de nuevo.');
+    } catch (err) {
+      toast.error(rpcErrorText(err) || 'Supabase no devolvió el motivo del error.');
     }
   };
 
@@ -194,6 +207,24 @@ export default function Customers() {
           value={formData.name}
           onChange={(e) => setFormData({ ...formData, name: e.target.value })}
         />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm">CUIT / CUIL</label>
+          <input
+            className="w-full border p-2 rounded"
+            value={formData.cuit}
+            onChange={(e) => setFormData({ ...formData, cuit: e.target.value })}
+          />
+        </div>
+        <div>
+          <label className="block text-sm">Persona de Contacto</label>
+          <input
+            className="w-full border p-2 rounded"
+            value={formData.contactName}
+            onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
+          />
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
@@ -292,6 +323,14 @@ export default function Customers() {
             </div>
           </div>
           <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+            <div>
+              <div className="text-xs text-brand-muted uppercase font-bold">CUIT / CUIL</div>
+              <div className="text-gray-800">{selected.cuit || '—'}</div>
+            </div>
+            <div>
+              <div className="text-xs text-brand-muted uppercase font-bold">Persona de Contacto</div>
+              <div className="text-gray-800">{selected.contactName || '—'}</div>
+            </div>
             <div>
               <div className="text-xs text-brand-muted uppercase font-bold">Teléfono</div>
               <div className="text-gray-800">{selected.phone || '—'}</div>
@@ -454,7 +493,7 @@ export default function Customers() {
                 >
                   <td className="px-6 py-3 font-medium text-gray-800">{c.name}</td>
                   <td className="px-6 py-3">
-                    <div className="text-gray-800">{c.phone}</div>
+                    <div className="text-gray-800">{c.contactName?.trim() || c.phone || '—'}</div>
                     <div className="text-xs text-gray-500">{c.email}</div>
                   </td>
                   <td className="px-6 py-3">

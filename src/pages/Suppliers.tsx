@@ -3,12 +3,21 @@ import { accountMovementsDB, suppliersDB, purchasesDB, productsDB } from '../lib
 import { AccountMovement, Product, Purchase, Supplier } from '../types';
 import { Button, ActionButtons, Modal, useConfirm, useToast } from '../components/ui';
 import { formatCurrency, generateId } from '../lib/utils';
+import { rpcErrorText } from '../lib/checks';
 import { balancesByParty, computeBalance } from '../lib/accountMovements';
 import CuentaCorriente from '../components/CuentaCorriente';
 import RegistrarMovimientoModal from '../components/RegistrarMovimientoModal';
 import PurchaseTicketModal from '../components/PurchaseTicketModal';
 
-const emptyForm = { name: '', phone: '', email: '', address: '', notes: '' };
+const emptyForm = {
+  name: '',
+  cuit: '',
+  contactName: '',
+  phone: '',
+  email: '',
+  address: '',
+  notes: '',
+};
 
 export default function Suppliers() {
   const { confirm } = useConfirm();
@@ -88,6 +97,8 @@ export default function Suppliers() {
       setEditing(item);
       setFormData({
         name: item.name,
+        cuit: item.cuit || '',
+        contactName: item.contactName || '',
         phone: item.phone,
         email: item.email,
         address: item.address,
@@ -103,18 +114,23 @@ export default function Suppliers() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const payload = {
+        ...formData,
+        cuit: formData.cuit.trim() || null,
+        contactName: formData.contactName.trim() || null,
+      };
       if (editing) {
-        const updated = { ...editing, ...formData };
+        const updated = { ...editing, ...payload };
         await suppliersDB.save(updated);
         if (selected?.id === editing.id) setSelected(updated);
       } else {
-        await suppliersDB.save({ id: generateId(), ...formData });
+        await suppliersDB.save({ id: generateId(), ...payload });
       }
       toast.success(editing ? 'Proveedor actualizado correctamente.' : 'Proveedor creado correctamente.');
       setIsModalOpen(false);
       await loadList();
-    } catch {
-      toast.error('No se pudo completar la operación. Intentá de nuevo.');
+    } catch (err) {
+      toast.error(rpcErrorText(err) || 'Supabase no devolvió el motivo del error.');
     }
   };
 
@@ -133,8 +149,8 @@ export default function Suppliers() {
         setMovements([]);
       }
       await loadList();
-    } catch {
-      toast.error('No se pudo completar la operación. Intentá de nuevo.');
+    } catch (err) {
+      toast.error(rpcErrorText(err) || 'Supabase no devolvió el motivo del error.');
     }
   };
 
@@ -148,6 +164,24 @@ export default function Suppliers() {
           value={formData.name}
           onChange={(e) => setFormData({ ...formData, name: e.target.value })}
         />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm">CUIT / CUIL</label>
+          <input
+            className="w-full border p-2 rounded"
+            value={formData.cuit}
+            onChange={(e) => setFormData({ ...formData, cuit: e.target.value })}
+          />
+        </div>
+        <div>
+          <label className="block text-sm">Persona de Contacto</label>
+          <input
+            className="w-full border p-2 rounded"
+            value={formData.contactName}
+            onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
+          />
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
@@ -227,6 +261,14 @@ export default function Suppliers() {
             </div>
           </div>
           <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+            <div>
+              <div className="text-xs text-brand-muted uppercase font-bold">CUIT / CUIL</div>
+              <div className="text-gray-800">{selected.cuit || '—'}</div>
+            </div>
+            <div>
+              <div className="text-xs text-brand-muted uppercase font-bold">Persona de Contacto</div>
+              <div className="text-gray-800">{selected.contactName || '—'}</div>
+            </div>
             <div>
               <div className="text-xs text-brand-muted uppercase font-bold">Teléfono</div>
               <div className="text-gray-800">{selected.phone || '—'}</div>
@@ -318,7 +360,7 @@ export default function Suppliers() {
                 >
                   <td className="px-6 py-3 font-medium text-gray-800">{s.name}</td>
                   <td className="px-6 py-3">
-                    <div className="text-gray-800">{s.phone}</div>
+                    <div className="text-gray-800">{s.contactName?.trim() || s.phone || '—'}</div>
                     <div className="text-xs text-gray-500">{s.email}</div>
                   </td>
                   <td className="px-6 py-3 text-gray-500">{s.address}</td>
