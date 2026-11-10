@@ -222,5 +222,14 @@ begin
 end;
 $$;
 
-grant execute on function public.register_treasury_transfer(timestamptz, uuid, uuid, numeric, numeric, text, uuid) to anon, authenticated;
-grant execute on function public.void_treasury_transfer(uuid, uuid, text) to anon, authenticated;
+grant execute on function public.register_treasury_transfer(timestamptz, uuid, uuid, numeric, numeric, text, uuid) to anon, authenticated, service_role;
+grant execute on function public.void_treasury_transfer(uuid, uuid, text) to anon, authenticated, service_role;
+
+-- Auth es por username en la app: sin RLS (mismo criterio que el resto del ERP).
+-- Supabase suele activar RLS en tablas nuevas; si queda prendido, el listado sale vacío
+-- y el insert de cuentas falla con 42501.
+alter table public.treasury_accounts disable row level security;
+alter table public.treasury_transfers disable row level security;
+
+grant select, insert, update, delete on table public.treasury_accounts to anon, authenticated, service_role;
+grant select, insert, update, delete on table public.treasury_transfers to anon, authenticated, service_role;

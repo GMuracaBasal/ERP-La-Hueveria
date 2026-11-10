@@ -24,6 +24,7 @@ import {
   type PaymentMethodCode,
 } from '../lib/paymentMethods';
 import PrintableVoucher from './PrintableVoucher';
+import TreasuryAccountSelect, { useArsTreasuryAccounts } from './TreasuryAccountSelect';
 
 type Mode = 'view' | 'edit' | 'void';
 
@@ -68,6 +69,8 @@ export default function SaleTicketModal({
   const [customerId, setCustomerId] = useState('');
   const [condition, setCondition] = useState<SaleCondition>('contado');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodCode>('efectivo');
+  const [accountId, setAccountId] = useState('');
+  const { accounts: arsAccounts, defaultId: defaultAccountId } = useArsTreasuryAccounts();
   const [items, setItems] = useState<SaleItem[]>([]);
   const [editReason, setEditReason] = useState('');
   const [voidReason, setVoidReason] = useState('');
@@ -87,10 +90,15 @@ export default function SaleTicketModal({
         : sale.condition,
     );
     setPaymentMethod((sale.paymentMethod as PaymentMethodCode) || 'efectivo');
+    setAccountId(sale.accountId || '');
     setItems(sale.items.map((i) => ({ ...i })));
     setEditReason('');
     setVoidReason('');
   }, [sale, initialMode, user, posStyle]);
+
+  useEffect(() => {
+    if (!accountId && defaultAccountId) setAccountId(defaultAccountId);
+  }, [accountId, defaultAccountId]);
 
   const namedCustomers = useMemo(
     () => customers.filter((c) => !isConsumidorFinal(c)),
@@ -201,6 +209,10 @@ export default function SaleTicketModal({
       toast.error('Debés indicar el medio de pago.');
       return;
     }
+    if (canChangeCondition && resolvedCondition === 'contado' && !accountId) {
+      toast.error('Seleccioná la cuenta donde entra el cobro.');
+      return;
+    }
 
     for (const item of items) {
       const available = getAvailableStock(item.productId, sale, products);
@@ -219,6 +231,7 @@ export default function SaleTicketModal({
         customerId: resolvedCustomerId,
         condition: resolvedCondition,
         paymentMethod: resolvedCondition === 'contado' ? paymentMethod : null,
+        accountId: resolvedCondition === 'contado' ? (accountId || sale.accountId || null) : null,
         date: sale.date,
         items,
         customerName: editCustomerName,
@@ -371,6 +384,14 @@ export default function SaleTicketModal({
             <p className="text-xs text-brand-muted italic">
               Sin cobro: solo Debe en la cuenta del cliente. No ingresa a caja.
             </p>
+          )}
+          {canChangeCondition && condition === 'contado' && (
+            <TreasuryAccountSelect
+              accounts={arsAccounts}
+              value={accountId}
+              onChange={setAccountId}
+              label="¿En qué cuenta entra el cobro?"
+            />
           )}
 
           <div className="border-t pt-4 space-y-2 max-h-48 overflow-y-auto">

@@ -3,6 +3,8 @@ import { Button, Modal, SearchableSelect, useToast } from './ui';
 import InputFecha from './InputFecha';
 import type { AccountPartyType } from '../types';
 import { accountMovementsDB, paymentsDB } from '../lib/db';
+import TreasuryAccountSelect, { useArsTreasuryAccounts } from './TreasuryAccountSelect';
+import { getTreasuryRpcErrorMessage } from '../lib/treasury';
 import { generateId, parseLocalDate, todayISODate, formatCurrency } from '../lib/utils';
 import { ajusteDebeHaber, roundMoney } from '../lib/accountMovements';
 import {
@@ -43,12 +45,15 @@ export default function RegistrarMovimientoModal({
   const [importe, setImporte] = useState('');
   const [sentido, setSentido] = useState<Sentido>('suma');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodCode>('efectivo');
+  const [accountId, setAccountId] = useState('');
   const [concept, setConcept] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const { accounts: arsAccounts, defaultId: defaultAccountId } = useArsTreasuryAccounts();
   const [fieldErrors, setFieldErrors] = useState<{
     importe?: string;
     concept?: string;
     paymentMethod?: string;
+    accountId?: string;
     date?: string;
   }>({});
 
@@ -59,10 +64,15 @@ export default function RegistrarMovimientoModal({
     setImporte('');
     setSentido('suma');
     setPaymentMethod('efectivo');
+    setAccountId('');
     setConcept('');
     setSubmitting(false);
     setFieldErrors({});
   }, [isOpen, partyType]);
+
+  useEffect(() => {
+    if (isOpen && !accountId && defaultAccountId) setAccountId(defaultAccountId);
+  }, [isOpen, accountId, defaultAccountId]);
 
   const isAjuste = tipo === 'ajuste';
   const tipoOptions =
@@ -111,6 +121,10 @@ export default function RegistrarMovimientoModal({
       next.paymentMethod = 'Seleccioná el medio de pago.';
     }
 
+    if (!isAjuste && !accountId) {
+      next.accountId = 'Seleccioná la cuenta.';
+    }
+
     setFieldErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -155,6 +169,7 @@ export default function RegistrarMovimientoModal({
           date: dateIso,
           amount,
           paymentMethod,
+          accountId,
           concept: concept.trim() || null,
           createdBy: user.id,
         });
@@ -172,8 +187,10 @@ export default function RegistrarMovimientoModal({
         setFieldErrors({ importe: 'El importe debe ser mayor a 0.' });
       } else if (msg.includes('INVALID_PAYMENT_METHOD')) {
         setFieldErrors({ paymentMethod: 'Medio de pago inválido.' });
+      } else if (msg.includes('ACCOUNT_REQUIRED') || msg.includes('ACCOUNT_NOT_FOUND') || msg.includes('ACCOUNT_DISABLED')) {
+        setFieldErrors({ accountId: 'Seleccioná la cuenta.' });
       } else {
-        toast.error('No se pudo registrar el movimiento. Intentá de nuevo.');
+        toast.error(getTreasuryRpcErrorMessage(err));
       }
     } finally {
       setSubmitting(false);
@@ -273,6 +290,19 @@ export default function RegistrarMovimientoModal({
               <p className="text-xs text-brand-danger mt-1">{fieldErrors.paymentMethod}</p>
             )}
           </div>
+        )}
+
+        {!isAjuste && (
+          <TreasuryAccountSelect
+            accounts={arsAccounts}
+            value={accountId}
+            onChange={(id) => {
+              setAccountId(id);
+              setFieldErrors((e) => ({ ...e, accountId: undefined }));
+            }}
+            label={tipo === 'cobro' ? '¿En qué cuenta entra la plata?' : '¿De qué cuenta sale la plata?'}
+            error={fieldErrors.accountId}
+          />
         )}
 
         {isAjuste && (

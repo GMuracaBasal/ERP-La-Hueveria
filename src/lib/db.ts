@@ -76,6 +76,8 @@ const mapFinanceToDB = (m: FinanceMovement) => ({
   payment_method: normalizePaymentMethod(m.paymentMethod) ?? m.paymentMethod ?? null,
   amount: m.amount, reference_id: m.referenceId,
   voided: m.voided ?? false,
+  account_id: m.accountId ?? null,
+  transfer_id: m.transferId ?? null,
 });
 
 const mapSupplierFromDB = (r: any): Supplier => ({
@@ -243,18 +245,49 @@ export const treasuryAccountsDB = {
     return data ? mapTreasuryAccountFromDB(data) : undefined;
   },
   async save(account: TreasuryAccount): Promise<void> {
+    const row = mapTreasuryAccountToDB(account);
     if (account.isDefault) {
+      const { is_default: _ignored, ...withoutDefault } = row;
+      const { error } = await supabase.from('treasury_accounts').upsert(withoutDefault);
+      if (error) throw error;
+      const { error: rpcErr } = await supabase.rpc('set_default_treasury_account', {
+        p_account_id: account.id,
+      });
+      if (!rpcErr) return;
+      if (!isMissingRpcError(rpcErr)) throw rpcErr;
       const { error: unsetErr } = await supabase
         .from('treasury_accounts')
         .update({ is_default: false })
         .neq('id', account.id)
         .eq('is_default', true);
       if (unsetErr) throw unsetErr;
+      const { error: setErr } = await supabase
+        .from('treasury_accounts')
+        .update({ is_default: true, enabled: true })
+        .eq('id', account.id);
+      if (setErr) throw setErr;
+      return;
     }
-    const { error } = await supabase.from('treasury_accounts').upsert(mapTreasuryAccountToDB(account));
+    const { error } = await supabase.from('treasury_accounts').upsert({ ...row, is_default: false });
     if (error) throw error;
   },
 };
+
+/** Cobros/pagos/ventas/compras: solo ARS habilitada. Si no hay id, usa la default ARS. */
+async function requireArsTreasuryAccountId(accountId?: string | null): Promise<string> {
+  const accounts = await treasuryAccountsDB.getAll();
+  if (accountId) {
+    const acc = accounts.find((a) => a.id === accountId);
+    if (!acc) throw new Error('ACCOUNT_NOT_FOUND');
+    if (!acc.enabled) throw new Error('ACCOUNT_DISABLED');
+    if (acc.currency !== 'ARS') throw new Error('ACCOUNT_NOT_ARS');
+    return acc.id;
+  }
+  const ars = accounts.filter((a) => a.enabled && a.currency === 'ARS');
+  const def = ars.find((a) => a.isDefault) ?? ars[0];
+  if (!def) throw new Error('ACCOUNT_REQUIRED');
+  return def.id;
+}
 
 const mapTreasuryTransferFromDB = (r: any): TreasuryTransfer => ({
   id: r.id,
@@ -408,6 +441,7 @@ const mapPurchaseFromDB = (p: any): Purchase => {
     notes: p.notes ?? '',
     condition,
     paymentMethod,
+    accountId: condition === 'cuenta_corriente' ? null : (p.account_id ?? null),
     total: Number(p.total),
     voided: p.voided ?? false,
     voidedAt: p.voided_at ?? null,
@@ -575,6 +609,7 @@ export const purchasesDB = {
       notes: purchase.notes,
       condition,
       payment_method: paymentMethod,
+      account_id: condition === 'cuenta_corriente' ? null : (purchase.accountId ?? null),
       total: purchase.total,
       voided: purchase.voided ?? false,
     });
@@ -617,6 +652,8 @@ export const purchasesDB = {
     }
 
     const total = roundMoney(purchase.items.reduce((acc, i) => acc + i.subtotal, 0));
+    const accountId =
+      condition === 'contado' ? await requireArsTreasuryAccountId(purchase.accountId) : null;
     const normalized: Purchase = {
       ...purchase,
       total,
@@ -624,6 +661,7 @@ export const purchasesDB = {
       paymentMethod: condition === 'cuenta_corriente'
         ? null
         : normalizePaymentMethod(purchase.paymentMethod),
+      accountId,
       voided: false,
     };
     const concept = purchaseConcept(
@@ -660,6 +698,7 @@ export const purchasesDB = {
         amount: normalized.total,
         paymentMethod: normalized.paymentMethod ?? undefined,
         referenceId: normalized.id,
+        accountId: normalized.accountId,
       });
     }
   },
@@ -698,7 +737,7 @@ export const purchasesDB = {
     reason: string,
     data: Pick<
       Purchase,
-      'supplierId' | 'invoiceNumber' | 'notes' | 'date' | 'items' | 'condition' | 'paymentMethod'
+      'supplierId' | 'invoiceNumber' | 'notes' | 'date' | 'items' | 'condition' | 'paymentMethod' | 'accountId'
     > & {
       supplierName?: string;
     },
@@ -726,6 +765,10 @@ export const purchasesDB = {
     await voidAccountMovementsForSale(purchaseId, userId);
 
     const total = roundMoney(data.items.reduce((acc, i) => acc + i.subtotal, 0));
+    const accountId =
+      nextCondition === 'contado'
+        ? await requireArsTreasuryAccountId(data.accountId ?? existing.accountId)
+        : null;
     const updated: Purchase = {
       ...existing,
       supplierId: data.supplierId,
@@ -739,6 +782,7 @@ export const purchasesDB = {
         nextCondition === 'cuenta_corriente'
           ? null
           : normalizePaymentMethod(data.paymentMethod),
+      accountId,
     };
 
     const { error: headerErr } = await supabase.from('purchases').update({
@@ -749,6 +793,7 @@ export const purchasesDB = {
       date: updated.date,
       condition: updated.condition,
       payment_method: updated.paymentMethod,
+      account_id: updated.accountId,
     }).eq('id', purchaseId);
     if (headerErr) throw headerErr;
 
@@ -797,6 +842,7 @@ export const purchasesDB = {
         amount: updated.total,
         paymentMethod: updated.paymentMethod ?? undefined,
         referenceId: purchaseId,
+        accountId: updated.accountId,
       });
     }
 
@@ -840,6 +886,7 @@ const mapSaleFromDB = (s: any): Sale => {
     pointOfSale: inferPointOfSale(s),
     condition,
     paymentMethod,
+    accountId: condition === 'cuenta_corriente' ? null : (s.account_id ?? null),
     total: Number(s.total),
     voided: s.voided ?? false,
     voidedAt: s.voided_at ?? null,
@@ -1065,6 +1112,7 @@ export const salesDB = {
       point_of_sale: sale.pointOfSale,
       condition,
       payment_method: paymentMethod,
+      account_id: condition === 'cuenta_corriente' ? null : (sale.accountId ?? null),
       total: sale.total,
       voided: sale.voided ?? false,
     });
@@ -1104,12 +1152,15 @@ export const salesDB = {
     }
 
     const total = roundMoney(sale.items.reduce((acc, i) => acc + i.subtotal, 0));
+    const accountId =
+      condition === 'contado' ? await requireArsTreasuryAccountId(sale.accountId) : null;
     const normalized: Sale = {
       ...sale,
       total,
       condition,
       paymentMethod:
         condition === 'cuenta_corriente' ? null : normalizePaymentMethod(sale.paymentMethod),
+      accountId,
       voided: false,
     };
 
@@ -1147,6 +1198,7 @@ export const salesDB = {
         amount: normalized.total,
         paymentMethod: normalized.paymentMethod ?? undefined,
         referenceId: normalized.id,
+        accountId: normalized.accountId,
       });
     }
   },
@@ -1183,7 +1235,7 @@ export const salesDB = {
     saleId: string,
     userId: string,
     reason: string,
-    sale: Pick<Sale, 'customerId' | 'paymentMethod' | 'date' | 'items' | 'condition'> & {
+    sale: Pick<Sale, 'customerId' | 'paymentMethod' | 'date' | 'items' | 'condition' | 'accountId'> & {
       customerName?: string;
     },
   ): Promise<void> {
@@ -1216,6 +1268,10 @@ export const salesDB = {
     }
 
     const total = roundMoney(sale.items.reduce((acc, i) => acc + i.subtotal, 0));
+    const accountId =
+      nextCondition === 'contado'
+        ? await requireArsTreasuryAccountId(sale.accountId ?? existing.accountId)
+        : null;
     const updated: Sale = {
       ...existing,
       customerId: sale.customerId,
@@ -1227,6 +1283,7 @@ export const salesDB = {
       items: sale.items,
       total,
       condition: nextCondition,
+      accountId,
     };
 
     const { error: headerErr } = await supabase.from('sales').update({
@@ -1236,6 +1293,7 @@ export const salesDB = {
       date: updated.date,
       condition: updated.condition,
       point_of_sale: existing.pointOfSale,
+      account_id: updated.accountId,
     }).eq('id', saleId);
     if (headerErr) throw headerErr;
 
@@ -1282,6 +1340,7 @@ export const salesDB = {
         amount: updated.total,
         paymentMethod: updated.paymentMethod ?? undefined,
         referenceId: saleId,
+        accountId: updated.accountId,
       });
     }
 
@@ -1361,6 +1420,7 @@ const mapPaymentFromDB = (r: any): Payment => ({
   date: r.date,
   amount: Number(r.amount),
   paymentMethod: normalizePaymentMethod(r.payment_method) ?? r.payment_method,
+  accountId: r.account_id ?? null,
   concept: r.concept ?? null,
   createdBy: r.created_by ?? null,
   createdAt: r.created_at,
@@ -1377,7 +1437,8 @@ function isMissingRpcError(error: { code?: string; message?: string } | null): b
     !!error.message?.includes('register_payment') ||
     !!error.message?.includes('void_payment') ||
     !!error.message?.includes('register_treasury_transfer') ||
-    !!error.message?.includes('void_treasury_transfer')
+    !!error.message?.includes('void_treasury_transfer') ||
+    !!error.message?.includes('set_default_treasury_account')
   );
 }
 
@@ -1514,6 +1575,7 @@ async function createPaymentClientSide(params: {
   paymentMethod: PaymentMethodCode;
   concept: string | null;
   createdBy: string;
+  accountId: string;
 }): Promise<string> {
   const amount = roundMoney(params.amount);
   if (!(amount > 0)) throw new Error('INVALID_AMOUNT');
@@ -1537,6 +1599,7 @@ async function createPaymentClientSide(params: {
       created_by: params.createdBy,
       created_at: now,
       voided: false,
+      account_id: params.accountId,
     });
     if (pErr) throw pErr;
 
@@ -1565,6 +1628,7 @@ async function createPaymentClientSide(params: {
       amount,
       reference_id: paymentId,
       voided: false,
+      account_id: params.accountId,
     });
     if (fErr) throw fErr;
 
@@ -1595,6 +1659,7 @@ export const paymentsDB = {
     paymentMethod: PaymentMethodCode;
     concept?: string | null;
     createdBy: string;
+    accountId: string;
   }): Promise<string> {
     const amount = roundMoney(params.amount);
     if (!(amount > 0)) throw new Error('INVALID_AMOUNT');
@@ -1603,6 +1668,7 @@ export const paymentsDB = {
     }
     if (params.type === 'cobro' && !params.customerId) throw new Error('CUSTOMER_REQUIRED');
     if (params.type === 'pago' && !params.supplierId) throw new Error('SUPPLIER_REQUIRED');
+    const accountId = await requireArsTreasuryAccountId(params.accountId);
 
     const { data, error } = await supabase.rpc('register_payment', {
       p_type: params.type,
@@ -1613,6 +1679,7 @@ export const paymentsDB = {
       p_payment_method: params.paymentMethod,
       p_concept: params.concept?.trim() || null,
       p_created_by: params.createdBy,
+      p_account_id: accountId,
     });
 
     if (!error) return data as string;
@@ -1627,6 +1694,7 @@ export const paymentsDB = {
       paymentMethod: params.paymentMethod,
       concept: params.concept?.trim() || null,
       createdBy: params.createdBy,
+      accountId,
     });
   },
 

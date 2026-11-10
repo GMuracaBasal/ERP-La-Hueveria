@@ -53,6 +53,12 @@ export function getSaleRpcErrorMessage(err: unknown): string {
   if (msg.includes('PAYMENT_REQUIRED')) {
     return 'Debés indicar el medio de pago del cobro.';
   }
+  if (msg.includes('ACCOUNT_NOT_ARS')) {
+    return 'Los cobros, pagos, ventas y compras solo pueden ir a cuentas en pesos.';
+  }
+  if (msg.includes('ACCOUNT_REQUIRED') || msg.includes('ACCOUNT_NOT_FOUND') || msg.includes('ACCOUNT_DISABLED')) {
+    return 'Seleccioná la cuenta de tesorería (solo pesos).';
+  }
   if (msg.includes('INSUFFICIENT_STOCK')) {
     return 'Stock insuficiente para uno o más productos.';
   }

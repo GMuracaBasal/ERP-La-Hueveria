@@ -71,6 +71,8 @@ export interface Purchase {
   condition: PurchaseCondition;
   /** Medio real del pago. Null cuando condition = cuenta_corriente. */
   paymentMethod: string | null;
+  /** Cuenta de tesorería del pago. Null cuando condition = cuenta_corriente. */
+  accountId?: string | null;
   total: number;
   items: PurchaseItem[];
   voided?: boolean;
@@ -100,6 +102,8 @@ export interface Sale {
   condition: SaleCondition;
   /** Medio real del cobro. Null cuando condition = cuenta_corriente (aún no hay cobro). */
   paymentMethod: string | null;
+  /** Cuenta de tesorería del cobro. Null cuando condition = cuenta_corriente. */
+  accountId?: string | null;
   total: number;
   items: SaleItem[];
   voided?: boolean;
@@ -215,6 +219,8 @@ export interface Payment {
   amount: number;
   /** Código: efectivo | transferencia | tarjeta | qr */
   paymentMethod: string;
+  /** Cuenta ARS donde entra (cobro) o sale (pago) la plata. */
+  accountId?: string | null;
   concept: string | null;
   createdBy: string | null;
   createdAt: string;

@@ -17,6 +17,24 @@ export function treasuryTypeLabel(type: TreasuryAccountType): string {
   return TREASURY_TYPE_OPTIONS.find((o) => o.value === type)?.label ?? type;
 }
 
+export const DEFAULT_ACCOUNT_REQUIRED_MSG =
+  'Tiene que haber siempre una cuenta por defecto. Marcá otra antes de cambiar ésta.';
+
+/** Cuentas que pueden recibir cobros/pagos/ventas/compras: ARS habilitadas. */
+export function arsEnabledAccounts(accounts: TreasuryAccount[]): TreasuryAccount[] {
+  return accounts.filter((a) => a.enabled && a.currency === 'ARS');
+}
+
+export function defaultArsAccountId(accounts: TreasuryAccount[]): string {
+  const ars = arsEnabledAccounts(accounts);
+  return ars.find((a) => a.isDefault)?.id || ars[0]?.id || '';
+}
+
+export function treasuryAccountOptionLabel(account: TreasuryAccount): string {
+  const extra = [account.bank, account.accountNumber].filter(Boolean).join(' · ');
+  return extra ? `${account.name} (${extra})` : account.name;
+}
+
 export function formatTreasuryMoney(amount: number, currency: TreasuryCurrency = 'ARS'): string {
   return new Intl.NumberFormat('es-AR', {
     style: 'currency',
@@ -107,5 +125,23 @@ export function getTreasuryRpcErrorMessage(err: unknown): string {
   if (raw.includes('FROM_ACCOUNT_NOT_FOUND') || raw.includes('TO_ACCOUNT_NOT_FOUND')) {
     return 'No se encontró una de las cuentas.';
   }
-  return 'No se pudo completar la operación. Intentá de nuevo.';
+  if (raw.includes('ACCOUNT_REQUIRED')) {
+    return 'Seleccioná la cuenta de tesorería (solo pesos).';
+  }
+  if (raw.includes('ACCOUNT_NOT_ARS')) {
+    return 'Los cobros, pagos, ventas y compras solo pueden ir a cuentas en pesos.';
+  }
+  if (raw.includes('ACCOUNT_DISABLED')) {
+    return 'Esa cuenta está deshabilitada.';
+  }
+  if (raw.includes('ACCOUNT_NOT_FOUND')) {
+    return 'No se encontró la cuenta de tesorería.';
+  }
+  if (raw.includes('row-level security') || raw.includes('42501') || raw.includes('permission denied')) {
+    return 'Supabase bloqueó la operación (RLS). En el SQL Editor corré el final de la migración de tesorería: desactivar RLS y GRANT sobre treasury_accounts / treasury_transfers.';
+  }
+  if (raw.includes('Could not find the table') || raw.includes('schema cache') || raw.includes('does not exist')) {
+    return 'Falta aplicar la migración de tesorería en el SQL Editor de Supabase.';
+  }
+  return raw || 'No se pudo completar la operación. Intentá de nuevo.';
 }

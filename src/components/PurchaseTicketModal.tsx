@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { purchasesDB, db } from '../lib/db';
 import { Purchase, PurchaseItem, Product, Supplier, PurchaseCondition, Settings } from '../types';
 import { Button, Modal, SearchableSelect, useToast } from './ui';
+import TreasuryAccountSelect, { useArsTreasuryAccounts } from './TreasuryAccountSelect';
 import { formatCurrency } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { canModifyPurchase, getPurchaseErrorMessage } from '../lib/purchasePermissions';
@@ -55,6 +56,8 @@ export default function PurchaseTicketModal({
   const [notes, setNotes] = useState('');
   const [condition, setCondition] = useState<PurchaseCondition>('contado');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodCode>('efectivo');
+  const [accountId, setAccountId] = useState('');
+  const { accounts: arsAccounts, defaultId: defaultAccountId } = useArsTreasuryAccounts();
   const [items, setItems] = useState<PurchaseItem[]>([]);
   const [editReason, setEditReason] = useState('');
   const [voidReason, setVoidReason] = useState('');
@@ -81,10 +84,15 @@ export default function PurchaseTicketModal({
     setPaymentMethod(
       (purchase.paymentMethod as PaymentMethodCode) || 'efectivo',
     );
+    setAccountId(purchase.accountId || '');
     setItems(purchase.items.map((i) => ({ ...i })));
     setEditReason('');
     setVoidReason('');
   }, [purchase, initialMode, user]);
+
+  useEffect(() => {
+    if (!accountId && defaultAccountId) setAccountId(defaultAccountId);
+  }, [accountId, defaultAccountId]);
 
   if (!purchase) return null;
 
@@ -161,6 +169,10 @@ export default function PurchaseTicketModal({
       toast.error('Debés indicar el medio de pago.');
       return;
     }
+    if (condition === 'contado' && !accountId) {
+      toast.error('Seleccioná la cuenta de donde sale el pago.');
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -172,6 +184,7 @@ export default function PurchaseTicketModal({
         items,
         condition,
         paymentMethod: condition === 'contado' ? paymentMethod : null,
+        accountId: condition === 'contado' ? accountId : null,
         supplierName: suppliers.find((s) => s.id === supplierId)?.name,
       });
       toast.success('Compra actualizada correctamente.');
@@ -335,6 +348,14 @@ export default function PurchaseTicketModal({
               </div>
             )}
           </div>
+          {condition === 'contado' && (
+            <TreasuryAccountSelect
+              accounts={arsAccounts}
+              value={accountId}
+              onChange={setAccountId}
+              label="¿De qué cuenta sale el pago?"
+            />
+          )}
 
           <div>
             <label className="block text-sm mb-1">Notas</label>

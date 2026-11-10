@@ -23,6 +23,7 @@ import {
   paymentMethodLabel,
   type PaymentMethodCode,
 } from '../lib/paymentMethods';
+import TreasuryAccountSelect, { useArsTreasuryAccounts } from '../components/TreasuryAccountSelect';
 
 export default function Sales() {
   const { user } = useAuth();
@@ -46,7 +47,13 @@ export default function Sales() {
   const [customerId, setCustomerId] = useState('');
   const [condition, setCondition] = useState<SaleCondition>('contado');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodCode>('efectivo');
+  const [accountId, setAccountId] = useState('');
+  const { accounts: arsAccounts, defaultId: defaultAccountId } = useArsTreasuryAccounts();
   const [saleDate, setSaleDate] = useState(todayISODate);
+
+  useEffect(() => {
+    if (defaultAccountId && !accountId) setAccountId(defaultAccountId);
+  }, [defaultAccountId, accountId]);
   const [items, setItems] = useState<SaleItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
@@ -92,6 +99,7 @@ export default function Sales() {
     setCustomerId('');
     setCondition('contado');
     setPaymentMethod('efectivo');
+    setAccountId(defaultAccountId);
     setSaleDate(todayISODate());
     setItems([]);
     setIsModalOpen(true);
@@ -151,6 +159,10 @@ export default function Sales() {
       toast.error('Debés indicar el medio de pago.');
       return;
     }
+    if (condition === 'contado' && !accountId) {
+      toast.error('Seleccioná la cuenta donde entra el cobro.');
+      return;
+    }
 
     for (const item of items) {
       const p = products.find((p) => p.id === item.productId);
@@ -176,6 +188,7 @@ export default function Sales() {
           pointOfSale: 'mayorista',
           condition,
           paymentMethod: condition === 'contado' ? paymentMethod : null,
+          accountId: condition === 'contado' ? accountId : null,
           total,
           items,
         },
@@ -372,6 +385,14 @@ export default function Sales() {
               </div>
             )}
           </div>
+          {condition === 'contado' && (
+            <TreasuryAccountSelect
+              accounts={arsAccounts}
+              value={accountId}
+              onChange={setAccountId}
+              label="¿En qué cuenta entra el cobro?"
+            />
+          )}
 
           <div className="border-t pt-4">
             <div className="flex justify-between items-center mb-2">

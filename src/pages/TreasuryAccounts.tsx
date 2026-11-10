@@ -13,6 +13,7 @@ import { generateId, formatFecha, formatFechaHora, isoDateToTimestamp, todayISOD
 import { roundMoney } from '../lib/accountMovements';
 import { useAuth } from '../contexts/AuthContext';
 import {
+  DEFAULT_ACCOUNT_REQUIRED_MSG,
   TREASURY_CURRENCY_OPTIONS,
   TREASURY_TYPE_OPTIONS,
   computeAccountBalance,
@@ -109,8 +110,8 @@ export default function TreasuryAccounts() {
     (async () => {
       try {
         await loadList();
-      } catch {
-        toast.error('No se pudieron cargar las cuentas. ¿Aplicaste la migración de tesorería?');
+      } catch (err) {
+        toast.error(getTreasuryRpcErrorMessage(err));
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -195,16 +196,9 @@ export default function TreasuryAccounts() {
       toast.error('El saldo inicial no es válido.');
       return;
     }
-    if (editing?.isDefault && !form.enabled) {
-      toast.error('No se puede deshabilitar la cuenta por defecto. Asigná otra primero.');
+    if (editing?.isDefault && (!form.enabled || !form.isDefault)) {
+      toast.error(DEFAULT_ACCOUNT_REQUIRED_MSG);
       return;
-    }
-    if (editing?.isDefault && !form.isDefault) {
-      const otherDefault = accounts.some((a) => a.id !== form.id && a.isDefault);
-      if (!otherDefault) {
-        toast.error('Tiene que quedar al menos una cuenta por defecto.');
-        return;
-      }
     }
 
     setSaving(true);
@@ -228,8 +222,8 @@ export default function TreasuryAccounts() {
       setAccountModal(false);
       await refreshDetail();
       if (!selected) await loadList();
-    } catch {
-      toast.error('No se pudo guardar la cuenta. Intentá de nuevo.');
+    } catch (err) {
+      toast.error(getTreasuryRpcErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -237,7 +231,7 @@ export default function TreasuryAccounts() {
 
   const handleDisable = async (account: TreasuryAccount) => {
     if (account.isDefault) {
-      toast.error('No se puede deshabilitar la cuenta por defecto. Asigná otra primero.');
+      toast.error(DEFAULT_ACCOUNT_REQUIRED_MSG);
       return;
     }
     const ok = await confirm({
@@ -251,8 +245,8 @@ export default function TreasuryAccounts() {
       toast.success('Cuenta deshabilitada.');
       await refreshDetail();
       if (!selected) await loadList();
-    } catch {
-      toast.error('No se pudo deshabilitar. Intentá de nuevo.');
+    } catch (err) {
+      toast.error(getTreasuryRpcErrorMessage(err));
     }
   };
 
