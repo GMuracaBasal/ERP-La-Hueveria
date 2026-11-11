@@ -373,6 +373,11 @@ begin
   if v_check.status <> 'en_cartera' then
     raise exception 'CHECK_NOT_IN_PORTFOLIO';
   end if;
+  -- Vigente: desde la fecha de cobro y por 30 días. Antes no se deposita, y al día 31 está vencido.
+  if (now() at time zone 'America/Argentina/Buenos_Aires')::date < v_check.due_date
+     or (now() at time zone 'America/Argentina/Buenos_Aires')::date > v_check.due_date + 30 then
+    raise exception 'CHECK_NOT_CURRENT';
+  end if;
 
   perform public.assert_ars_treasury_account(p_account_id);
 
@@ -429,7 +434,7 @@ begin
     'Acreditación cheque Nº ' || v_check.check_number,
     'cheque',
     v_check.amount,
-    v_check.id::text,
+    v_check.id,
     false,
     v_check.deposit_account_id
   );
@@ -573,7 +578,7 @@ begin
 
   update public.finance_movements
   set voided = true
-  where reference_id = p_check_id::text
+  where reference_id = p_check_id
     and voided = false;
 
   update public.received_checks

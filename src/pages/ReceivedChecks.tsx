@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   customersDB,
   receivedChecksDB,
+  suppliersDB,
   treasuryAccountsDB,
 } from '../lib/db';
-import type { Customer, ReceivedCheck, ReceivedCheckKind, TreasuryAccount } from '../types';
+import type { Customer, ReceivedCheck, ReceivedCheckKind, Supplier, TreasuryAccount } from '../types';
 import { Badge, Button, Modal, SearchableSelect, useConfirm, useToast } from '../components/ui';
 import InputFecha from '../components/InputFecha';
 import FiltroFechas, { type DateRange, isDateInRange } from '../components/FiltroFechas';
@@ -14,17 +15,22 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   CHECK_KIND_OPTIONS,
   CHECK_STATUS_OPTIONS,
+  canDepositReceivedCheck,
   checkDueAttention,
   checkKindLabel,
+  depositBlockedReason,
+  receivedDueMark,
   checkStatusLabel,
   checkStatusVariant,
   getReceivedCheckErrorMessage,
   rpcErrorText,
   sumReceivedChecks,
+  sumVigenteReceived,
 } from '../lib/checks';
 import { roundMoney } from '../lib/accountMovements';
 import { defaultArsAccountId } from '../lib/treasury';
 import { formatCurrency, formatFecha, isoDateToTimestamp, parseLocalDate, todayISODate } from '../lib/utils';
+import IssuedChecks from './IssuedChecks';
 
 type Mode = 'create' | 'view' | 'deposit' | 'credit' | 'reject' | 'void';
 
@@ -57,9 +63,15 @@ export default function ReceivedChecks() {
   const { user } = useAuth();
   const { toast } = useToast();
   const { confirm } = useConfirm();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get('tab') === 'emitidos' ? 'emitidos' : 'recibidos';
+  const setTab = (next: 'recibidos' | 'emitidos') => {
+    setSearchParams(next === 'emitidos' ? { tab: 'emitidos' } : {}, { replace: true });
+  };
 
   const [checks, setChecks] = useState<ReceivedCheck[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [accounts, setAccounts] = useState<TreasuryAccount[]>([]);
   const [range, setRange] = useState(initialRange);
   const [statusFilter, setStatusFilter] = useState<string>('todos');
@@ -81,19 +93,23 @@ export default function ReceivedChecks() {
 
   const customerName = (id: string | null) =>
     customers.find((c) => c.id === id)?.name ?? '—';
+  const supplierName = (id: string | null) =>
+    suppliers.find((s) => s.id === id)?.name ?? '—';
 
   const accountName = (id: string | null) =>
     accounts.find((a) => a.id === id)?.name ?? '—';
 
   const load = async () => {
     try {
-      const [rows, custs, accs] = await Promise.all([
+      const [rows, custs, provs, accs] = await Promise.all([
         receivedChecksDB.listActive(),
         customersDB.getAll(),
+        suppliersDB.getAll(),
         treasuryAccountsDB.getAll(),
       ]);
       setChecks(rows);
       setCustomers(custs);
+      setSuppliers(provs);
       setAccounts(accs);
       setLoadError('');
     } catch (err) {
@@ -117,6 +133,7 @@ export default function ReceivedChecks() {
   }, [checks, range, statusFilter]);
 
   const enCartera = sumReceivedChecks(checks, 'en_cartera');
+  const vigentes = sumVigenteReceived(checks);
   const depositados = sumReceivedChecks(checks, 'depositado');
   const acreditadosPeriodo = checks
     .filter((c) => c.status === 'acreditado' && !!c.creditedAt && isDateInRange(c.creditedAt, range.from, range.to))
@@ -192,6 +209,10 @@ export default function ReceivedChecks() {
     e.preventDefault();
     if (!user || !active) return;
     const next: Record<string, string> = {};
+    if (!canDepositReceivedCheck(active)) {
+      toast.error(depositBlockedReason(active) ?? 'Ese cheque no se puede depositar.');
+      return;
+    }
     if (!actionDate) next.date = 'La fecha es obligatoria.';
     if (!accountId) next.accountId = 'Seleccioná la cuenta.';
     setFieldErrors(next);
@@ -330,9 +351,32 @@ export default function ReceivedChecks() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Cheques</h1>
           <p className="text-sm text-brand-muted mt-1">
-            Recibidos de clientes. La cartera no es plata disponible.
+            {tab === 'emitidos'
+              ? 'Emitidos por nosotros. Pendiente no es una salida: la plata sale al debitarse.'
+              : 'Recibidos de clientes. La cartera no es plata disponible. Se deposita solo mientras está vigente: desde la fecha de cobro y por 30 días.'}
           </p>
+          <div className="flex gap-1 mt-3">
+            <button
+              type="button"
+              onClick={() => setTab('recibidos')}
+              className={`px-4 py-2 text-sm font-semibold border-b-2 ${
+                tab === 'recibidos' ? 'border-brand-orange text-brand-brown' : 'border-transparent text-brand-muted'
+              }`}
+            >
+              Recibidos
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('emitidos')}
+              className={`px-4 py-2 text-sm font-semibold border-b-2 ${
+                tab === 'emitidos' ? 'border-brand-orange text-brand-brown' : 'border-transparent text-brand-muted'
+              }`}
+            >
+              Emitidos
+            </button>
+          </div>
         </div>
+        {tab === 'recibidos' && (
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-brand-muted mb-1">Vencimiento</p>
@@ -348,9 +392,20 @@ export default function ReceivedChecks() {
           </div>
           <Button onClick={openCreate}>Cargar cheque en cartera</Button>
         </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      {tab === 'emitidos' ? (
+        <IssuedChecks />
+      ) : (
+      <>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+        <TotalCard
+          label="Vigentes"
+          amount={loadError ? null : vigentes}
+          hint="Para cobrar. Desde la fecha de cobro y por 30 días. Los endosados no se suman."
+          tone="green"
+        />
         <TotalCard
           label="En cartera"
           amount={loadError ? null : enCartera}
@@ -409,16 +464,12 @@ export default function ReceivedChecks() {
               )}
               {filtered.map((c) => {
                 const attention = checkDueAttention(c);
+                const dueMark = receivedDueMark(attention);
+                const depositable = canDepositReceivedCheck(c);
                 return (
                   <tr
                     key={c.id}
-                    className={`border-b border-gray-50 ${
-                      attention === 'overdue'
-                        ? 'bg-red-50'
-                        : attention
-                          ? 'bg-amber-50'
-                          : 'hover:bg-gray-50'
-                    }`}
+                    className={`border-b border-gray-50 ${dueMark?.rowClass ?? 'hover:bg-gray-50'}`}
                   >
                     <td className="px-4 py-3 font-medium text-gray-800">{c.checkNumber}</td>
                     <td className="px-4 py-3">{c.bank || '—'}</td>
@@ -427,9 +478,7 @@ export default function ReceivedChecks() {
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex flex-wrap items-center gap-2">
                         {formatFecha(c.dueDate)}
-                        {attention === 'overdue' && <Badge variant="danger">Vencido</Badge>}
-                        {attention === 'today' && <Badge variant="warning">Vence hoy</Badge>}
-                        {attention === 'soon' && <Badge variant="warning">Por vencer</Badge>}
+                        {dueMark && <Badge variant={dueMark.variant}>{dueMark.label}</Badge>}
                       </div>
                     </td>
                     <td className="px-4 py-3">{customerName(c.customerId)}</td>
@@ -441,7 +490,9 @@ export default function ReceivedChecks() {
                         <Button size="sm" variant="ghost" onClick={() => openAction('view', c)}>Ver</Button>
                         {c.status === 'en_cartera' && (
                           <>
-                            <Button size="sm" onClick={() => openAction('deposit', c)}>Depositar</Button>
+                            <span title={depositBlockedReason(c) ?? undefined}>
+                              <Button size="sm" disabled={!depositable} onClick={() => openAction('deposit', c)}>Depositar</Button>
+                            </span>
                             <Button size="sm" variant="danger" onClick={() => openAction('reject', c)}>Rechazar</Button>
                             <Button size="sm" variant="secondary" onClick={() => openAction('void', c)}>Anular</Button>
                           </>
@@ -467,6 +518,7 @@ export default function ReceivedChecks() {
           <CheckDetail
             check={active}
             customerName={customerName(active.customerId)}
+            beneficiaryName={supplierName(active.endorsedToSupplierId)}
             accountName={accountName(active.depositAccountId)}
           />
         )}
@@ -599,15 +651,37 @@ export default function ReceivedChecks() {
         Los saldos de las cuentas están en <Link to="/finanzas/cuentas" className="text-brand-teja hover:underline">Cuentas</Link>.
         Esta cartera no se suma ahí.
       </p>
+      </>
+      )}
     </div>
   );
 }
 
-function TotalCard({ label, amount, hint }: { label: string; amount: number | null; hint: string }) {
+function TotalCard({
+  label,
+  amount,
+  hint,
+  tone = 'default',
+}: {
+  label: string;
+  amount: number | null;
+  hint: string;
+  tone?: 'default' | 'green' | 'red';
+}) {
+  const toneClass = tone === 'green'
+    ? 'border-green-300 bg-green-50'
+    : tone === 'red'
+      ? 'border-red-300 bg-red-50'
+      : 'border-brand-border bg-white';
+  const amountClass = tone === 'green'
+    ? 'text-green-800'
+    : tone === 'red'
+      ? 'text-red-800'
+      : 'text-brand-brown';
   return (
-    <div className="rounded-2xl border border-brand-border bg-white px-5 py-4 min-w-0">
+    <div className={`rounded-2xl border px-5 py-4 min-w-0 ${toneClass}`}>
       <div className="text-xs font-bold uppercase tracking-wider text-brand-muted">{label}</div>
-      <div className="text-2xl font-bold text-brand-brown mt-1">
+      <div className={`text-2xl font-bold mt-1 ${amountClass}`}>
         {amount == null ? '—' : formatCurrency(amount)}
       </div>
       <p className="text-xs text-brand-muted mt-1">{hint}</p>
@@ -750,13 +824,15 @@ function CheckFields({
 function CheckDetail({
   check,
   customerName,
+  beneficiaryName,
   accountName,
 }: {
   check: ReceivedCheck;
   customerName: string;
+  beneficiaryName: string;
   accountName: string;
 }) {
-  const attention = checkDueAttention(check);
+  const dueMark = receivedDueMark(checkDueAttention(check));
   const row = (label: string, value: React.ReactNode) => (
     <div>
       <div className="text-xs text-brand-muted uppercase font-bold">{label}</div>
@@ -775,13 +851,12 @@ function CheckDetail({
       {row('Vencimiento', (
         <span className="inline-flex flex-wrap items-center gap-2">
           {formatFecha(check.dueDate)}
-          {attention === 'overdue' && <Badge variant="danger">Vencido</Badge>}
-          {attention === 'today' && <Badge variant="warning">Vence hoy</Badge>}
-          {attention === 'soon' && <Badge variant="warning">Por vencer</Badge>}
+          {dueMark && <Badge variant={dueMark.variant}>{dueMark.label}</Badge>}
         </span>
       ))}
       {row('Cliente', customerName)}
       {row('Estado', <Badge variant={checkStatusVariant(check.status)}>{checkStatusLabel(check.status)}</Badge>)}
+      {(check.status === 'endosado' || check.endorsedToSupplierId) && row('Beneficiario', beneficiaryName)}
       {row('Cuenta de depósito', check.depositAccountId ? accountName : '—')}
       {row('Depositado', formatFecha(check.depositedAt))}
       {row('Acreditado', formatFecha(check.creditedAt))}

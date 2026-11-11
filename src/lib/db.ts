@@ -4,15 +4,11 @@ import {
   User, Product, PriceList, Supplier, Customer,
   Purchase, Sale, InventoryMovement, FinanceMovement, Settings,
   AccountMovement, PointOfSale, SaleCondition, PurchaseCondition,
-  Payment, PaymentType, TreasuryAccount, TreasuryTransfer,
-  ReceivedCheck, ReceivedCheckDraft,
+  Payment, PaymentType, PaymentValue, PaymentValueInput, TreasuryAccount, TreasuryTransfer,
+  ReceivedCheck, ReceivedCheckDraft, IssuedCheck,
 } from '../types';
 import { roundMoney } from './accountMovements';
-import {
-  defaultPaymentConcept,
-  normalizePaymentMethod,
-  type PaymentMethodCode,
-} from './paymentMethods';
+import { normalizePaymentMethod } from './paymentMethods';
 
 // ─── Helpers de mapeo (snake_case en DB ↔ camelCase en TS) ───────────
 
@@ -1452,20 +1448,6 @@ function isMissingChecksTable(error: { code?: string; message?: string } | null)
   );
 }
 
-function checkPayload(check: ReceivedCheckDraft, amount: number) {
-  return {
-    check_number: check.checkNumber.trim(),
-    kind: check.kind,
-    bank: check.bank?.trim() || null,
-    drawer_name: check.drawerName?.trim() || null,
-    drawer_tax_id: check.drawerTaxId?.trim() || null,
-    amount,
-    issue_date: check.issueDate || null,
-    due_date: check.dueDate,
-    notes: check.notes?.trim() || null,
-  };
-}
-
 export const receivedChecksDB = {
   async listActive(): Promise<ReceivedCheck[]> {
     const { data, error } = await supabase
@@ -1485,6 +1467,18 @@ export const receivedChecksDB = {
       .eq('customer_id', customerId)
       .eq('voided', false)
       .in('status', ['en_cartera', 'depositado'])
+      .order('due_date', { ascending: true });
+    if (error) throw error;
+    return (data ?? []).map(mapReceivedCheckFromDB);
+  },
+
+  /** Cheques que se pueden endosar. */
+  async listInPortfolio(): Promise<ReceivedCheck[]> {
+    const { data, error } = await supabase
+      .from('received_checks')
+      .select('*')
+      .eq('voided', false)
+      .eq('status', 'en_cartera')
       .order('due_date', { ascending: true });
     if (error) throw error;
     return (data ?? []).map(mapReceivedCheckFromDB);
@@ -1591,7 +1585,154 @@ export const receivedChecksDB = {
   },
 };
 
-// ─── Cobros / Pagos (CC + caja, o CC + cheque en cartera) ────────────
+const mapIssuedCheckFromDB = (r: any): IssuedCheck => ({
+  id: r.id,
+  checkNumber: r.check_number,
+  kind: r.kind === 'echeq' ? 'echeq' : 'papel',
+  accountId: r.account_id,
+  supplierId: r.supplier_id ?? null,
+  amount: Number(r.amount),
+  issueDate: r.issue_date ?? null,
+  dueDate: r.due_date,
+  status: r.status,
+  debitedAt: r.debited_at ?? null,
+  rejectedAt: r.rejected_at ?? null,
+  rejectionReason: r.rejection_reason ?? null,
+  notes: r.notes ?? null,
+  createdBy: r.created_by ?? null,
+  createdAt: r.created_at,
+  voided: !!r.voided,
+  voidedAt: r.voided_at ?? null,
+  voidedBy: r.voided_by ?? null,
+});
+
+export const issuedChecksDB = {
+  /** Incluye anulados (voided) para poder verlos en la pestaña Emitidos. */
+  async listAll(): Promise<IssuedCheck[]> {
+    const { data, error } = await supabase
+      .from('issued_checks')
+      .select('*')
+      .order('due_date', { ascending: true });
+    if (error) throw error;
+    return (data ?? []).map(mapIssuedCheckFromDB);
+  },
+
+  async debit(checkId: string, date: string, userId: string): Promise<void> {
+    const { error } = await supabase.rpc('debit_issued_check', {
+      p_check_id: checkId,
+      p_date: date,
+      p_user_id: userId,
+    });
+    if (error) throw error;
+  },
+
+  async reject(checkId: string, date: string, reason: string, userId: string): Promise<void> {
+    if (!reason.trim()) throw new Error('REASON_REQUIRED');
+    const { error } = await supabase.rpc('reject_issued_check', {
+      p_check_id: checkId,
+      p_date: date,
+      p_reason: reason.trim(),
+      p_user_id: userId,
+    });
+    if (error) throw error;
+  },
+};
+
+export interface PaymentValueView {
+  id: string;
+  method: string;
+  amount: number;
+  accountName: string | null;
+  checkNumber: string | null;
+  dueDate: string | null;
+  detail: string | null;
+}
+
+const mapPaymentValueFromDB = (r: any): PaymentValue => ({
+  id: r.id,
+  paymentId: r.payment_id,
+  method: r.method,
+  amount: Number(r.amount),
+  accountId: r.account_id ?? null,
+  receivedCheckId: r.received_check_id ?? null,
+  issuedCheckId: r.issued_check_id ?? null,
+  createdAt: r.created_at,
+});
+
+export const paymentValuesDB = {
+  async listByPayment(paymentId: string): Promise<PaymentValue[]> {
+    const { data, error } = await supabase
+      .from('payment_values')
+      .select('*')
+      .eq('payment_id', paymentId)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    return (data ?? []).map(mapPaymentValueFromDB);
+  },
+
+  /** Líneas con nombre de cuenta, número y vencimiento, para el libro y el recibo. */
+  async listViews(paymentId: string): Promise<PaymentValueView[]> {
+    const values = await this.listByPayment(paymentId);
+    if (values.length === 0) return [];
+
+    const accountIds = values.map((v) => v.accountId).filter((id): id is string => !!id);
+    const receivedIds = values.map((v) => v.receivedCheckId).filter((id): id is string => !!id);
+    const issuedIds = values.map((v) => v.issuedCheckId).filter((id): id is string => !!id);
+
+    const [accountsRes, receivedRes, issuedRes] = await Promise.all([
+      accountIds.length
+        ? supabase.from('treasury_accounts').select('id, name').in('id', accountIds)
+        : Promise.resolve({ data: [], error: null }),
+      receivedIds.length
+        ? supabase.from('received_checks').select('id, check_number, bank, drawer_name, due_date').in('id', receivedIds)
+        : Promise.resolve({ data: [], error: null }),
+      issuedIds.length
+        ? supabase.from('issued_checks').select('id, check_number, due_date, account_id').in('id', issuedIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (accountsRes.error) throw accountsRes.error;
+    if (receivedRes.error) throw receivedRes.error;
+    if (issuedRes.error) throw issuedRes.error;
+
+    const issuedAccountIds = (issuedRes.data ?? [])
+      .map((r: any) => r.account_id)
+      .filter((id: string | null) => id && !accountIds.includes(id));
+    let issuedAccounts: { id: string; name: string }[] = [];
+    if (issuedAccountIds.length) {
+      const extra = await supabase.from('treasury_accounts').select('id, name').in('id', issuedAccountIds);
+      if (extra.error) throw extra.error;
+      issuedAccounts = extra.data ?? [];
+    }
+
+    const accountName = new Map<string, string>(
+      [...(accountsRes.data ?? []), ...issuedAccounts].map((a: any) => [a.id, a.name]),
+    );
+    const received = new Map((receivedRes.data ?? []).map((r: any) => [r.id, r]));
+    const issued = new Map((issuedRes.data ?? []).map((r: any) => [r.id, r]));
+
+    return values.map((v) => {
+      const rec = v.receivedCheckId ? received.get(v.receivedCheckId) : null;
+      const own = v.issuedCheckId ? issued.get(v.issuedCheckId) : null;
+      const checkNumber = rec?.check_number ?? own?.check_number ?? null;
+      const dueDate = rec?.due_date ?? own?.due_date ?? null;
+      const accountId = v.accountId ?? own?.account_id ?? null;
+      const detail = rec
+        ? [rec.bank, rec.drawer_name].filter(Boolean).join(' · ') || null
+        : null;
+      return {
+        id: v.id,
+        method: v.method,
+        amount: v.amount,
+        accountName: accountId ? accountName.get(accountId) ?? null : null,
+        checkNumber,
+        dueDate,
+        detail,
+      };
+    });
+  },
+};
+
+// ─── Cobros / Pagos (cabecera + valores) ─────────────────────────────
 
 const mapPaymentFromDB = (r: any): Payment => ({
   id: r.id,
@@ -1736,169 +1877,6 @@ async function voidTreasuryTransferClientSide(transferId: string, userId: string
   }
 }
 
-/** Compensación si falla a mitad en el fallback sin RPC. El cheque se borra antes que el payment (FK). */
-async function rollbackPaymentCreate(paymentId: string): Promise<void> {
-  await supabase.from('received_checks').delete().eq('payment_id', paymentId);
-  await supabase.from('finance_movements').delete().eq('reference_id', paymentId);
-  await supabase
-    .from('account_movements')
-    .delete()
-    .eq('reference_id', paymentId)
-    .in('reference_type', ['cobro', 'pago']);
-  await supabase.from('payments').delete().eq('id', paymentId);
-}
-
-/** Cobro con cheque sin RPC: payment + haber + cheque. Si algo falla, no queda el cheque sin la cuenta corriente. */
-async function createCheckPaymentClientSide(params: {
-  customerId: string;
-  date: string;
-  amount: number;
-  concept: string | null;
-  createdBy: string;
-  check: ReceivedCheckDraft;
-}): Promise<string> {
-  const amount = roundMoney(params.amount);
-  const checkAmount = roundMoney(params.check.amount);
-  if (!(amount > 0) || checkAmount !== amount) throw new Error('CHECK_AMOUNT_MISMATCH');
-  if (!params.check.checkNumber.trim()) throw new Error('CHECK_NUMBER_REQUIRED');
-  if (!params.check.dueDate) throw new Error('DUE_DATE_REQUIRED');
-
-  const paymentId = generateId();
-  const concept = (params.concept && params.concept.trim()) || defaultPaymentConcept('cobro', 'cheque');
-  const now = new Date().toISOString();
-
-  try {
-    const { error: pErr } = await supabase.from('payments').insert({
-      id: paymentId,
-      type: 'cobro',
-      customer_id: params.customerId,
-      supplier_id: null,
-      date: params.date,
-      amount,
-      payment_method: 'cheque',
-      concept: params.concept?.trim() || null,
-      created_by: params.createdBy,
-      created_at: now,
-      voided: false,
-      account_id: null,
-    });
-    if (pErr) throw pErr;
-
-    const { error: aErr } = await supabase.from('account_movements').insert({
-      id: generateId(),
-      date: params.date,
-      customer_id: params.customerId,
-      supplier_id: null,
-      concept,
-      debe: 0,
-      haber: amount,
-      reference_type: 'cobro',
-      reference_id: paymentId,
-      created_by: params.createdBy,
-      created_at: now,
-      voided: false,
-    });
-    if (aErr) throw aErr;
-
-    const { error: cErr } = await supabase.from('received_checks').insert({
-      id: generateId(),
-      check_number: params.check.checkNumber.trim(),
-      kind: params.check.kind,
-      bank: params.check.bank?.trim() || null,
-      drawer_name: params.check.drawerName?.trim() || null,
-      drawer_tax_id: params.check.drawerTaxId?.trim() || null,
-      amount,
-      issue_date: params.check.issueDate || null,
-      due_date: params.check.dueDate,
-      customer_id: params.customerId,
-      payment_id: paymentId,
-      status: 'en_cartera',
-      notes: params.check.notes?.trim() || null,
-      created_by: params.createdBy,
-      voided: false,
-    });
-    if (cErr) throw cErr;
-
-    return paymentId;
-  } catch (err) {
-    await rollbackPaymentCreate(paymentId);
-    throw err;
-  }
-}
-
-async function createPaymentClientSide(params: {
-  type: PaymentType;
-  customerId: string | null;
-  supplierId: string | null;
-  date: string;
-  amount: number;
-  paymentMethod: PaymentMethodCode;
-  concept: string | null;
-  createdBy: string;
-  accountId: string;
-}): Promise<string> {
-  const amount = roundMoney(params.amount);
-  if (!(amount > 0)) throw new Error('INVALID_AMOUNT');
-
-  const paymentId = generateId();
-  const concept =
-    (params.concept && params.concept.trim()) ||
-    defaultPaymentConcept(params.type, params.paymentMethod);
-  const now = new Date().toISOString();
-
-  try {
-    const { error: pErr } = await supabase.from('payments').insert({
-      id: paymentId,
-      type: params.type,
-      customer_id: params.customerId,
-      supplier_id: params.supplierId,
-      date: params.date,
-      amount,
-      payment_method: params.paymentMethod,
-      concept: params.concept?.trim() || null,
-      created_by: params.createdBy,
-      created_at: now,
-      voided: false,
-      account_id: params.accountId,
-    });
-    if (pErr) throw pErr;
-
-    const { error: aErr } = await supabase.from('account_movements').insert({
-      id: generateId(),
-      date: params.date,
-      customer_id: params.type === 'cobro' ? params.customerId : null,
-      supplier_id: params.type === 'pago' ? params.supplierId : null,
-      concept,
-      debe: params.type === 'pago' ? amount : 0,
-      haber: params.type === 'cobro' ? amount : 0,
-      reference_type: params.type,
-      reference_id: paymentId,
-      created_by: params.createdBy,
-      created_at: now,
-      voided: false,
-    });
-    if (aErr) throw aErr;
-
-    const { error: fErr } = await supabase.from('finance_movements').insert({
-      id: generateId(),
-      date: params.date,
-      type: params.type === 'cobro' ? 'ingreso' : 'egreso',
-      concept,
-      payment_method: params.paymentMethod,
-      amount,
-      reference_id: paymentId,
-      voided: false,
-      account_id: params.accountId,
-    });
-    if (fErr) throw fErr;
-
-    return paymentId;
-  } catch (err) {
-    await rollbackPaymentCreate(paymentId);
-    throw err;
-  }
-}
-
 export const paymentsDB = {
   async getById(id: string): Promise<Payment | undefined> {
     const { data, error } = await supabase.from('payments').select('*').eq('id', id).maybeSingle();
@@ -1907,43 +1885,72 @@ export const paymentsDB = {
   },
 
   /**
-   * Registra cobro o pago.
-   * Efectivo/transferencia/tarjeta/QR: payment + cuenta corriente + finance_movement en una cuenta ARS.
-   * Cheque (solo cobro): payment + haber del cliente + cheque en cartera. Ninguna cuenta se mueve.
-   * Prefiere RPC atómica; si falta la función, usa cliente con rollback.
+   * Cobro o pago con uno o más valores. Un solo asiento de cuenta corriente por el total.
+   * La plata se mueve solo en efectivo/transferencia/tarjeta/QR. Los cheques quedan
+   * en cartera, endosados o pendientes, y no tocan tesorería.
    */
   async register(params: {
     type: PaymentType;
     customerId?: string | null;
     supplierId?: string | null;
     date: string;
-    amount: number;
-    paymentMethod: PaymentMethodCode | 'cheque';
     concept?: string | null;
     createdBy: string;
-    accountId?: string | null;
-    check?: ReceivedCheckDraft | null;
+    values: PaymentValueInput[];
   }): Promise<string> {
-    const amount = roundMoney(params.amount);
-    if (!(amount > 0)) throw new Error('INVALID_AMOUNT');
     if (params.type === 'cobro' && !params.customerId) throw new Error('CUSTOMER_REQUIRED');
     if (params.type === 'pago' && !params.supplierId) throw new Error('SUPPLIER_REQUIRED');
+    if (!params.values.length) throw new Error('VALUES_REQUIRED');
 
-    const isCheck = params.paymentMethod === 'cheque';
-    if (isCheck) {
-      if (params.type !== 'cobro' || !params.customerId) throw new Error('CHECK_ONLY_ON_COLLECTION');
-      if (!params.check) throw new Error('CHECK_REQUIRED');
-      if (!params.check.checkNumber.trim()) throw new Error('CHECK_NUMBER_REQUIRED');
-      if (!params.check.dueDate) throw new Error('DUE_DATE_REQUIRED');
-      if (params.check.kind !== 'papel' && params.check.kind !== 'echeq') {
-        throw new Error('INVALID_CHECK_KIND');
+    const rpcValues = params.values.map((v) => {
+      const amount = roundMoney(v.amount);
+      if (!(amount > 0)) throw new Error('INVALID_AMOUNT');
+      if (v.method === 'cheque_tercero' && 'check' in v) {
+        if (params.type !== 'cobro') throw new Error('CHECK_ONLY_ON_COLLECTION');
+        if (!v.check.checkNumber.trim()) throw new Error('CHECK_NUMBER_REQUIRED');
+        if (!v.check.dueDate) throw new Error('DUE_DATE_REQUIRED');
+        if (v.check.kind !== 'papel' && v.check.kind !== 'echeq') throw new Error('INVALID_CHECK_KIND');
+        return {
+          method: 'cheque_tercero',
+          amount,
+          check: {
+            check_number: v.check.checkNumber.trim(),
+            kind: v.check.kind,
+            bank: v.check.bank?.trim() || null,
+            drawer_name: v.check.drawerName?.trim() || null,
+            drawer_tax_id: v.check.drawerTaxId?.trim() || null,
+            issue_date: v.check.issueDate || null,
+            due_date: v.check.dueDate,
+          },
+        };
       }
-      if (roundMoney(params.check.amount) !== amount) throw new Error('CHECK_AMOUNT_MISMATCH');
-    } else if (!['efectivo', 'transferencia', 'tarjeta', 'qr'].includes(params.paymentMethod)) {
-      throw new Error('INVALID_PAYMENT_METHOD');
-    }
+      if (v.method === 'cheque_tercero' && 'receivedCheckId' in v) {
+        if (params.type !== 'pago') throw new Error('CHECK_REQUIRED');
+        if (!v.receivedCheckId) throw new Error('CHECK_REQUIRED');
+        return { method: 'cheque_tercero', amount, received_check_id: v.receivedCheckId };
+      }
+      if (v.method === 'cheque_propio') {
+        if (params.type !== 'pago') throw new Error('CHECK_PROPIO_ONLY_ON_PAYMENT');
+        if (!v.checkNumber.trim()) throw new Error('CHECK_NUMBER_REQUIRED');
+        if (!v.dueDate) throw new Error('DUE_DATE_REQUIRED');
+        if (v.kind !== 'papel' && v.kind !== 'echeq') throw new Error('INVALID_CHECK_KIND');
+        if (!v.accountId) throw new Error('ACCOUNT_REQUIRED');
+        return {
+          method: 'cheque_propio',
+          amount,
+          check_number: v.checkNumber.trim(),
+          kind: v.kind,
+          account_id: v.accountId,
+          due_date: v.dueDate,
+          issue_date: v.issueDate || null,
+        };
+      }
+      if (!v.accountId) throw new Error('ACCOUNT_REQUIRED');
+      return { method: v.method, amount, account_id: v.accountId };
+    });
 
-    const accountId = isCheck ? null : await requireArsTreasuryAccountId(params.accountId);
+    const amount = rpcValues.reduce((acc, v) => roundMoney(acc + v.amount), 0);
+    if (!(amount > 0)) throw new Error('INVALID_AMOUNT');
 
     const { data, error } = await supabase.rpc('register_payment', {
       p_type: params.type,
@@ -1951,90 +1958,23 @@ export const paymentsDB = {
       p_supplier_id: params.type === 'pago' ? params.supplierId : null,
       p_date: params.date,
       p_amount: amount,
-      p_payment_method: params.paymentMethod,
       p_concept: params.concept?.trim() || null,
       p_created_by: params.createdBy,
-      p_account_id: accountId,
-      p_check: isCheck && params.check ? checkPayload(params.check, amount) : null,
+      p_values: rpcValues,
     });
-
-    if (!error) return data as string;
-    if (!isMissingRpcError(error)) throw error;
-
-    if (isCheck && params.check && params.customerId) {
-      return createCheckPaymentClientSide({
-        customerId: params.customerId,
-        date: params.date,
-        amount,
-        concept: params.concept?.trim() || null,
-        createdBy: params.createdBy,
-        check: params.check,
-      });
-    }
-
-    return createPaymentClientSide({
-      type: params.type,
-      customerId: params.type === 'cobro' ? params.customerId ?? null : null,
-      supplierId: params.type === 'pago' ? params.supplierId ?? null : null,
-      date: params.date,
-      amount,
-      paymentMethod: params.paymentMethod as PaymentMethodCode,
-      concept: params.concept?.trim() || null,
-      createdBy: params.createdBy,
-      accountId: accountId as string,
-    });
+    if (error) throw error;
+    return data as string;
   },
 
-  /** Anula payment + CC + finanzas. Motivo obligatorio. */
+  /** Anula la cabecera, la cuenta corriente, la plata y los cheques del movimiento. */
   async void(paymentId: string, userId: string, reason: string): Promise<void> {
     if (!reason.trim()) throw new Error('REASON_REQUIRED');
-
     const { error } = await supabase.rpc('void_payment', {
       p_payment_id: paymentId,
       p_user_id: userId,
       p_reason: reason.trim(),
     });
-
-    if (!error) return;
-    if (!isMissingRpcError(error)) throw error;
-
-    // Fallback no-RPC: anular las patas; si el cheque ya se acreditó, no se toca nada.
-    const payment = await this.getById(paymentId);
-    if (!payment) throw new Error('PAYMENT_NOT_FOUND');
-    if (payment.voided) throw new Error('PAYMENT_ALREADY_VOIDED');
-
-    const linkedChecks = await receivedChecksDB.listByPayment(paymentId);
-    if (linkedChecks.some((c) => c.status === 'acreditado')) {
-      throw new Error('CHECK_ALREADY_CREDITED');
-    }
-    if (linkedChecks.some((c) => c.status === 'endosado')) {
-      throw new Error('CHECK_ENDORSED');
-    }
-
-    const now = new Date().toISOString();
-    const { error: pErr } = await supabase
-      .from('payments')
-      .update({ voided: true, voided_at: now, voided_by: userId })
-      .eq('id', paymentId)
-      .eq('voided', false);
-    if (pErr) throw pErr;
-
-    const { error: aErr } = await supabase
-      .from('account_movements')
-      .update({ voided: true, voided_at: now, voided_by: userId })
-      .eq('reference_id', paymentId)
-      .in('reference_type', ['cobro', 'pago'])
-      .eq('voided', false);
-    if (aErr) throw aErr;
-
-    const { error: fErr } = await supabase
-      .from('finance_movements')
-      .update({ voided: true })
-      .eq('reference_id', paymentId)
-      .eq('voided', false);
-    if (fErr) throw fErr;
-
-    await receivedChecksDB.voidOpenForPayment(paymentId, userId, reason.trim());
+    if (error) throw error;
   },
 };
 

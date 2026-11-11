@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Eye, Pencil, Ban } from 'lucide-react';
 import {
   financeDB,
+  issuedChecksDB,
   receivedChecksDB,
   treasuryAccountsDB,
   treasuryTransfersDB,
@@ -12,7 +13,7 @@ import { Badge, Button, Modal, SearchableSelect, useConfirm, useToast } from '..
 import InputFecha from '../components/InputFecha';
 import FiltroFechas, { defaultDateRange, isDateInRange } from '../components/FiltroFechas';
 import { generateId, formatCurrency, formatFecha, formatFechaHora, isoDateToTimestamp, todayISODate } from '../lib/utils';
-import { getReceivedCheckErrorMessage, sumReceivedChecks } from '../lib/checks';
+import { getReceivedCheckErrorMessage, sumIssuedChecks, sumReceivedChecks } from '../lib/checks';
 import { roundMoney } from '../lib/accountMovements';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -64,6 +65,8 @@ export default function TreasuryAccounts() {
   const [movements, setMovements] = useState<FinanceMovement[]>([]);
   const [portfolio, setPortfolio] = useState<number | null>(null);
   const [portfolioError, setPortfolioError] = useState('');
+  const [issuedPending, setIssuedPending] = useState<number | null>(null);
+  const [issuedError, setIssuedError] = useState('');
   const [selected, setSelected] = useState<TreasuryAccount | null>(null);
   const [ledger, setLedger] = useState<FinanceMovement[]>([]);
   const [dateRange, setDateRange] = useState(defaultDateRange);
@@ -111,6 +114,14 @@ export default function TreasuryAccounts() {
     } catch (err) {
       setPortfolio(null);
       setPortfolioError(getReceivedCheckErrorMessage(err));
+    }
+    try {
+      const issued = await issuedChecksDB.listAll();
+      setIssuedPending(sumIssuedChecks(issued, 'pendiente'));
+      setIssuedError('');
+    } catch (err) {
+      setIssuedPending(null);
+      setIssuedError(getReceivedCheckErrorMessage(err));
     }
     return accs;
   };
@@ -781,7 +792,7 @@ export default function TreasuryAccounts() {
             ))}
           </p>
           <p className="text-xs text-brand-muted mt-1">
-            Estos saldos son solo de las cuentas. Los cheques en cartera no están incluidos.
+            Estos saldos son solo de las cuentas. Los cheques en cartera no están incluidos. Los cheques propios pendientes todavía figuran acá, hasta que se debiten.
           </p>
         </div>
         <div className="flex gap-2">
@@ -792,6 +803,7 @@ export default function TreasuryAccounts() {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
       <div className="rounded-2xl border-2 border-dashed border-amber-500/80 bg-amber-50 px-6 py-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-xs font-bold uppercase tracking-wider text-amber-900">Cheques en cartera</div>
@@ -808,6 +820,24 @@ export default function TreasuryAccounts() {
             Ver cheques
           </Link>
         </div>
+      </div>
+      <div className="rounded-2xl border-2 border-dashed border-sky-600/70 bg-sky-50 px-6 py-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-bold uppercase tracking-wider text-sky-950">Cheques propios pendientes</div>
+          <p className="text-sm text-sky-950/80 mt-1 max-w-xl">
+            Plata comprometida que todavía figura en los saldos. Sale de la cuenta cuando el cheque se debita.
+          </p>
+          {issuedError && <p className="text-xs text-brand-danger mt-2">{issuedError}</p>}
+        </div>
+        <div className="text-right">
+          <div className="text-2xl font-bold text-sky-950">
+            {issuedPending == null ? '—' : formatCurrency(issuedPending)}
+          </div>
+          <Link to="/finanzas/cheques?tab=emitidos" className="text-sm font-semibold text-brand-teja hover:underline">
+            Ver emitidos
+          </Link>
+        </div>
+      </div>
       </div>
 
       {grouped.map((g) => (

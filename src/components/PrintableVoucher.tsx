@@ -37,6 +37,7 @@ export interface VoucherPayment {
   concept?: string | null;
   amount: number;
   balanceAfter?: number | null;
+  lines?: { label: string; detail?: string | null; amount: number }[];
 }
 
 export interface PrintableVoucherProps {
@@ -186,6 +187,16 @@ export default function PrintableVoucher({
           {payment.concept?.trim() ? (
             <div className="pv-payment-line">
               <span className="pv-label">Concepto:</span> {payment.concept}
+            </div>
+          ) : null}
+          {payment.lines && payment.lines.length > 0 ? (
+            <div className="pv-payment-line">
+              {payment.lines.map((line, index) => (
+                <div key={`${line.label}-${index}`}>
+                  {line.label}
+                  {line.detail ? ` · ${line.detail}` : ''}: {formatCurrency(line.amount)}
+                </div>
+              ))}
             </div>
           ) : null}
           <div className="pv-totals">

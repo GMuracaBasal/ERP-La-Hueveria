@@ -14,6 +14,7 @@ import { formatCurrency, formatFecha, generateId } from '../lib/utils';
 import {
   checkDueAttention,
   checkStatusLabel,
+  receivedDueMark,
   checkStatusVariant,
   getReceivedCheckErrorMessage,
   rpcErrorText,
@@ -389,13 +390,11 @@ export default function Customers() {
                 </thead>
                 <tbody>
                   {openChecks.map((c) => {
-                    const attention = checkDueAttention(c);
+                    const dueMark = receivedDueMark(checkDueAttention(c));
                     return (
                       <tr
                         key={c.id}
-                        className={`border-b border-gray-50 ${
-                          attention === 'overdue' ? 'bg-red-50' : attention ? 'bg-amber-50' : ''
-                        }`}
+                        className={`border-b border-gray-50 ${dueMark?.rowClass ?? ''}`}
                       >
                         <td className="px-4 py-3 font-medium">{c.checkNumber}</td>
                         <td className="px-4 py-3">{c.bank || '—'}</td>
@@ -404,9 +403,7 @@ export default function Customers() {
                         <td className="px-4 py-3 whitespace-nowrap">
                           <span className="inline-flex flex-wrap items-center gap-2">
                             {formatFecha(c.dueDate)}
-                            {attention === 'overdue' && <Badge variant="danger">Vencido</Badge>}
-                            {attention === 'today' && <Badge variant="warning">Vence hoy</Badge>}
-                            {attention === 'soon' && <Badge variant="warning">Por vencer</Badge>}
+                            {dueMark && <Badge variant={dueMark.variant}>{dueMark.label}</Badge>}
                           </span>
                         </td>
                         <td className="px-4 py-3">

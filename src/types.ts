@@ -216,7 +216,32 @@ export type ReceivedCheckStatus =
   | 'depositado'
   | 'acreditado'
   | 'rechazado'
-  | 'endosado';
+  | 'endosado'
+  | 'anulado';
+
+export type IssuedCheckStatus = 'pendiente' | 'debitado' | 'rechazado' | 'anulado';
+
+/** Cheque emitido por nosotros. Pendiente no es una salida de plata: sale al debitarse. */
+export interface IssuedCheck {
+  id: string;
+  checkNumber: string;
+  kind: ReceivedCheckKind;
+  accountId: string;
+  supplierId: string | null;
+  amount: number;
+  issueDate: string | null;
+  dueDate: string;
+  status: IssuedCheckStatus;
+  debitedAt: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+  notes: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  voided: boolean;
+  voidedAt: string | null;
+  voidedBy: string | null;
+}
 
 /** Cheque recibido de un cliente. En cartera o depositado no es plata disponible. */
 export interface ReceivedCheck {
@@ -262,6 +287,41 @@ export interface ReceivedCheckDraft {
   customerId?: string | null;
 }
 
+export type PaymentValueMethod =
+  | 'efectivo'
+  | 'transferencia'
+  | 'tarjeta'
+  | 'qr'
+  | 'cheque_tercero'
+  | 'cheque_propio';
+
+/** Línea de un cobro o pago. La cuenta corriente no se entera de cada línea: solo del total. */
+export interface PaymentValue {
+  id: string;
+  paymentId: string;
+  method: PaymentValueMethod;
+  amount: number;
+  accountId: string | null;
+  receivedCheckId: string | null;
+  issuedCheckId: string | null;
+  createdAt: string;
+}
+
+/** Una línea lista para registrar. El cheque de tercero en un cobro trae los datos; en un pago, el id de cartera. */
+export type PaymentValueInput =
+  | { method: 'efectivo' | 'transferencia' | 'tarjeta' | 'qr'; amount: number; accountId: string }
+  | { method: 'cheque_tercero'; amount: number; check: ReceivedCheckDraft }
+  | { method: 'cheque_tercero'; amount: number; receivedCheckId: string }
+  | {
+      method: 'cheque_propio';
+      amount: number;
+      checkNumber: string;
+      kind: ReceivedCheckKind;
+      accountId: string;
+      dueDate: string;
+      issueDate?: string | null;
+    };
+
 export interface Payment {
   id: string;
   type: PaymentType;
@@ -269,9 +329,9 @@ export interface Payment {
   supplierId: string | null;
   date: string;
   amount: number;
-  /** Código: efectivo | transferencia | tarjeta | qr | cheque */
+  /** Resumen: el método si todos los valores coinciden, o mixto. La fuente de verdad es payment_values. */
   paymentMethod: string;
-  /** Cuenta ARS donde entra o sale la plata. Null cuando el medio es cheque (todavía no hay plata). */
+  /** Resumen legado. Null si hay más de un valor o si el valor no es plata. */
   accountId?: string | null;
   concept: string | null;
   createdBy: string | null;

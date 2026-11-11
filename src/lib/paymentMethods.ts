@@ -8,12 +8,6 @@ export const PAYMENT_METHOD_OPTIONS: { value: PaymentMethodCode; label: string }
   { value: 'qr', label: 'QR' },
 ];
 
-/** Cobro a cliente: los medios de siempre, más el cheque que queda en cartera. */
-export const COLLECTION_PAYMENT_OPTIONS: { value: PaymentMethodCode | 'cheque'; label: string }[] = [
-  ...PAYMENT_METHOD_OPTIONS,
-  { value: 'cheque', label: 'Cheque' },
-];
-
 /** Medios del POS / Caja del día (mostrador). */
 export const POS_PAYMENT_OPTIONS: { value: PaymentMethodCode; label: string }[] = [
   { value: 'efectivo', label: 'Efectivo' },
@@ -60,7 +54,9 @@ export function normalizePaymentMethod(
 
 export function paymentMethodLabel(code: PaymentMethodCode | string | null | undefined): string {
   if (code == null || code === '') return '—';
-  if (code === 'cheque' || code === 'Cheque') return 'Cheque';
+  if (code === 'cheque' || code === 'Cheque' || code === 'cheque_tercero') return 'Cheque';
+  if (code === 'cheque_propio') return 'Cheque propio';
+  if (code === 'mixto') return 'Mixto';
   const normalized = normalizePaymentMethod(code) ?? code;
   return PAYMENT_METHOD_OPTIONS.find((o) => o.value === normalized)?.label ?? String(normalized);
 }

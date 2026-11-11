@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { Printer } from 'lucide-react';
+import { Eye, Printer } from 'lucide-react';
 import type { AccountMovement, AccountPartyType } from '../types';
 import { Badge, Button, Modal, useConfirm, useToast } from './ui';
-import { formatCurrency, formatFechaHora } from '../lib/utils';
+import { formatCurrency, formatFecha, formatFechaHora } from '../lib/utils';
 import { computeBalance, withRunningBalance, type AccountMovementRow } from '../lib/accountMovements';
-import { accountMovementsDB, customersDB, db, paymentsDB, suppliersDB } from '../lib/db';
+import { accountMovementsDB, customersDB, db, paymentsDB, paymentValuesDB, suppliersDB, type PaymentValueView } from '../lib/db';
 import { paymentMethodLabel } from '../lib/paymentMethods';
 import { getReceivedCheckErrorMessage } from '../lib/checks';
 import { useAuth } from '../contexts/AuthContext';
@@ -62,6 +62,7 @@ export default function CuentaCorriente({
   const [voidError, setVoidError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [recibo, setRecibo] = useState<Omit<ReciboModalProps, 'isOpen' | 'onClose'> | null>(null);
+  const [valueDetail, setValueDetail] = useState<{ title: string; rows: PaymentValueView[]; total: number } | null>(null);
 
   const refBadge = (m: AccountMovement) => {
     if (m.voided) return null;
@@ -123,6 +124,23 @@ export default function CuentaCorriente({
     setVoidError('');
   };
 
+  const openValues = async (m: AccountMovementRow) => {
+    if (!m.referenceId) return;
+    try {
+      const [payment, rows] = await Promise.all([
+        paymentsDB.getById(m.referenceId),
+        paymentValuesDB.listViews(m.referenceId),
+      ]);
+      setValueDetail({
+        title: m.concept,
+        rows,
+        total: payment?.amount ?? (m.haber > 0 ? m.haber : m.debe),
+      });
+    } catch (err) {
+      toast.error(getReceivedCheckErrorMessage(err));
+    }
+  };
+
   const openRecibo = async (m: AccountMovementRow) => {
     const partyId = partyType === 'customer' ? m.customerId : m.supplierId;
     if (!partyId) {
@@ -136,6 +154,14 @@ export default function CuentaCorriente({
         m.referenceId ? paymentsDB.getById(m.referenceId) : Promise.resolve(undefined),
         db.getSettings(),
       ]);
+      let valueRows: PaymentValueView[] = [];
+      if (m.referenceId) {
+        try {
+          valueRows = await paymentValuesDB.listViews(m.referenceId);
+        } catch {
+          valueRows = [];
+        }
+      }
       if (!titular) {
         toast.error('No se encontraron los datos del titular.');
         return;
@@ -162,6 +188,13 @@ export default function CuentaCorriente({
           concept: payment?.concept || m.concept,
           amount,
           balanceAfter: m.runningBalance,
+          lines: valueRows.map((row) => ({
+            label: paymentMethodLabel(row.method),
+            detail: [row.accountName, row.checkNumber ? `Nº ${row.checkNumber}` : null, row.detail]
+              .filter(Boolean)
+              .join(' · ') || null,
+            amount: row.amount,
+          })),
         },
         voided: m.voided || !!payment?.voided,
       });
@@ -256,7 +289,17 @@ export default function CuentaCorriente({
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      {clickable ? (
+                      {isStandalonePayment(m, movements) ? (
+                        <button
+                          type="button"
+                          className={`text-left font-medium text-brand-teja hover:underline ${
+                            m.voided ? 'line-through opacity-70' : ''
+                          }`}
+                          onClick={() => openValues(m)}
+                        >
+                          {m.concept}
+                        </button>
+                      ) : clickable ? (
                         <button
                           type="button"
                           className={`text-left font-medium text-brand-teja hover:underline ${
@@ -290,15 +333,26 @@ export default function CuentaCorriente({
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center justify-end gap-1">
                       {isStandalonePayment(m, movements) && (
-                        <button
-                          type="button"
-                          title="Imprimir recibo"
-                          aria-label="Imprimir recibo"
-                          className="p-1.5 rounded-lg text-gray-400 hover:bg-brand-durazno/60 hover:text-brand-navy transition-colors"
-                          onClick={() => openRecibo(m)}
-                        >
-                          <Printer className="w-4 h-4" />
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            title="Ver valores"
+                            aria-label="Ver valores"
+                            className="p-1.5 rounded-lg text-gray-400 hover:bg-brand-durazno/60 hover:text-brand-navy transition-colors"
+                            onClick={() => openValues(m)}
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            title="Imprimir recibo"
+                            aria-label="Imprimir recibo"
+                            className="p-1.5 rounded-lg text-gray-400 hover:bg-brand-durazno/60 hover:text-brand-navy transition-colors"
+                            onClick={() => openRecibo(m)}
+                          >
+                            <Printer className="w-4 h-4" />
+                          </button>
+                        </>
                       )}
                       {canVoidFromBook(m) && (
                         <Button
@@ -332,8 +386,10 @@ export default function CuentaCorriente({
       >
         <div className="space-y-4">
           <p className="text-sm text-brand-muted">
-            Se anulará <strong>{voidTarget?.concept}</strong> en la cuenta corriente y su
-            movimiento en caja. No se puede deshacer.
+            Se anulará <strong>{voidTarget?.concept}</strong> en la cuenta corriente.
+            También se revierten sus valores: la plata vuelve a la cuenta, un cheque recibido
+            de este cobro queda anulado y un cheque endosado vuelve a la cartera. Si algún
+            cheque ya se acreditó o se debitó, primero hay que resolverlo.
           </p>
           <div>
             <label className="block text-sm font-semibold mb-1">
@@ -363,6 +419,43 @@ export default function CuentaCorriente({
           </div>
         </div>
       </Modal>
+
+      {valueDetail && (
+        <Modal isOpen onClose={() => setValueDetail(null)} title="Valores del movimiento" wide>
+          <div className="space-y-3">
+            <p className="text-sm text-brand-muted">{valueDetail.title}</p>
+            {valueDetail.rows.length === 0 ? (
+              <p className="text-sm text-brand-muted">Este movimiento no tiene valores cargados.</p>
+            ) : (
+              <table className="min-w-full text-sm">
+                <thead className="text-[10px] uppercase text-white font-bold bg-brand-navy">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Tipo</th>
+                    <th className="px-3 py-2 text-left">Cuenta / Banco</th>
+                    <th className="px-3 py-2 text-left">Nº cheque</th>
+                    <th className="px-3 py-2 text-left">Vencimiento</th>
+                    <th className="px-3 py-2 text-right">Importe</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {valueDetail.rows.map((row) => (
+                    <tr key={row.id} className="border-t border-gray-100">
+                      <td className="px-3 py-2">{paymentMethodLabel(row.method)}</td>
+                      <td className="px-3 py-2">{row.accountName || row.detail || '—'}</td>
+                      <td className="px-3 py-2">{row.checkNumber || '—'}</td>
+                      <td className="px-3 py-2">{row.dueDate ? formatFecha(row.dueDate) : '—'}</td>
+                      <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <p className="text-sm text-right font-bold text-brand-brown">
+              Total {formatCurrency(valueDetail.total)}
+            </p>
+          </div>
+        </Modal>
+      )}
 
       {recibo && (
         <ReciboModal
