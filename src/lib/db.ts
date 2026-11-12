@@ -171,6 +171,24 @@ export const inventoryDB = {
     if (error) throw error;
     return (data ?? []).map(mapInventoryFromDB);
   },
+  /** Movimientos no anulados desde una fecha, para el dashboard. No trae el histórico completo. */
+  async listSince(sinceIso: string): Promise<InventoryMovement[]> {
+    const pageSize = 1000;
+    const all: InventoryMovement[] = [];
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await supabase
+        .from('inventory_movements')
+        .select('*')
+        .eq('voided', false)
+        .gte('date', sinceIso)
+        .order('date', { ascending: false })
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      const rows = (data ?? []).map(mapInventoryFromDB);
+      all.push(...rows);
+      if (rows.length < pageSize) return all;
+    }
+  },
 };
 
 export const financeDB = {
@@ -1094,6 +1112,34 @@ export const salesDB = {
     const { data, error } = await query.maybeSingle();
     if (error) throw error;
     return data ? mapSaleFromDB(data) : undefined;
+  },
+
+  /** Ítems de ventas no anuladas desde una fecha. La fecha se filtra en la venta, que es quien la tiene. */
+  async listItemsSince(sinceIso: string): Promise<{ productId: string; quantity: number; subtotal: number }[]> {
+    const pageSize = 1000;
+    const lines: { productId: string; quantity: number; subtotal: number }[] = [];
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await supabase
+        .from('sales')
+        .select('sale_items(product_id, quantity, subtotal)')
+        .eq('voided', false)
+        .gte('date', sinceIso)
+        .order('date', { ascending: false })
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      const sales = data ?? [];
+      for (const sale of sales) {
+        const items = (sale as { sale_items?: { product_id: string; quantity: number; subtotal: number }[] }).sale_items ?? [];
+        for (const item of items) {
+          lines.push({
+            productId: item.product_id,
+            quantity: Number(item.quantity),
+            subtotal: Number(item.subtotal),
+          });
+        }
+      }
+      if (sales.length < pageSize) return lines;
+    }
   },
 
   async save(sale: Sale): Promise<void> {

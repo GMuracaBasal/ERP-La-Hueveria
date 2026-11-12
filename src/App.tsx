@@ -8,6 +8,7 @@ import Login from './pages/Login';
 import Layout from './components/Layout';
 
 import ModuleDashboard from './pages/ModuleDashboard';
+import InventoryDashboard from './pages/InventoryDashboard';
 import Products from './pages/Products';
 import Inventory from './pages/Inventory';
 import Customers from './pages/Customers';
@@ -62,7 +63,7 @@ function AppLogic() {
         <Route path="/" element={<ProtectedRoute sectionId="inicio"><ModuleDashboard title="Inicio" /></ProtectedRoute>} />
 
         {/* Inventario */}
-        <Route path="/inventario" element={<ProtectedRoute sectionId="inventario-dashboard"><ModuleDashboard title="Inventario" /></ProtectedRoute>} />
+        <Route path="/inventario" element={<ProtectedRoute sectionId="inventario-dashboard"><InventoryDashboard /></ProtectedRoute>} />
         <Route path="/inventario/productos" element={<ProtectedRoute sectionId="inventario-productos"><Products /></ProtectedRoute>} />
         <Route path="/inventario/movimientos" element={<ProtectedRoute sectionId="inventario-movimientos"><Inventory /></ProtectedRoute>} />
 
